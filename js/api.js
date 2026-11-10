@@ -3,14 +3,18 @@
   const cfg = window.PORTAL_CONFIG || {};
   const FINAIS = new Set(window.LISTAS.status.filter(s => s.final).map(s => s.nome));
 
+  const dominiosTexto = () => (cfg.dominiosPermitidos || ["voeazul.com.br"]).map(d => "@" + d).join(" ou ");
+
   // Traduz erros técnicos para mensagens que o usuário entende.
   function traduzir(err) {
     const msg = (err && (err.message || err.error_description || String(err))) || "Erro desconhecido.";
     if (/Invalid login credentials/i.test(msg)) return "E-mail ou senha incorretos.";
     if (/already registered|already been registered|User already exists/i.test(msg)) return "Este e-mail já tem cadastro. Entre com sua senha ou peça ao time para redefinir.";
-    if (/Database error saving new user/i.test(msg)) return "Use seu e-mail corporativo da Azul para se cadastrar.";
+    if (/Database error saving new user/i.test(msg)) return "Use seu e-mail corporativo (" + dominiosTexto() + ") para se cadastrar.";
     if (/Password should be at least/i.test(msg)) return "A senha precisa ter pelo menos 8 caracteres.";
-    if (/Email not confirmed/i.test(msg)) return "Este acesso ainda não foi confirmado. Fale com o time de Inside Sales.";
+    if (/Email not confirmed/i.test(msg)) return "E-mail ainda não confirmado. Abra a mensagem do Portal de Leads na sua caixa de entrada e clique no link de confirmação.";
+    if (/Error sending confirmation email|Email address not authorized|sending.*email/i.test(msg)) return "Não conseguimos enviar o e-mail de confirmação agora. Tente de novo em alguns minutos ou fale com o time de Inside Sales.";
+    if (/For security purposes, you can only request this after/i.test(msg)) return "Aguarde um minuto antes de pedir um novo e-mail.";
     if (/rate limit/i.test(msg)) return "Muitas tentativas seguidas. Aguarde alguns minutos e tente de novo.";
     if (/Failed to fetch|NetworkError/i.test(msg)) return "Sem conexão com o servidor. Confira sua internet e tente de novo.";
     if (/row-level security|permission denied/i.test(msg)) return "Você não tem permissão para esta ação.";
@@ -52,13 +56,14 @@
       async entrar(email, senha) {
         await ok(sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password: senha }));
       },
+      // Com "Confirm email" ligado no Supabase, o cadastro volta sem sessão:
+      // a pessoa precisa clicar no link enviado para o e-mail antes de entrar.
       async cadastrar(email, senha, dados) {
-        const data = await ok(sb.auth.signUp({ email: email.trim().toLowerCase(), password: senha, options: { data: dados } }));
-        if (!data.session) {
-          // Confirmação de e-mail ligada no Supabase: tenta entrar direto.
-          try { await this.entrar(email, senha); }
-          catch (e) { throw new Error("Cadastro criado, mas o Supabase pediu confirmação por e-mail. O time precisa desligar \"Confirm email\" nas configurações."); }
-        }
+        const data = await ok(sb.auth.signUp({ email: email.trim().toLowerCase(), password: senha, options: { data: dados, emailRedirectTo: location.origin + location.pathname } }));
+        return { confirmar: !data.session };
+      },
+      async reenviarConfirmacao(email) {
+        await ok(sb.auth.resend({ type: "signup", email: email.trim().toLowerCase(), options: { emailRedirectTo: location.origin + location.pathname } }));
       },
       async sair() { await sb.auth.signOut(); },
       async trocarSenha(nova) { await ok(sb.auth.updateUser({ password: nova })); },
@@ -99,7 +104,8 @@
         { id: "t1", nome: "Time Inside Sales", email: "inside.sales@voeazul.com.br", celular: "11900000000", sigla: "IS", cidade_uf: "São Paulo/SP", regiao: "Sudeste", papel: "time", situacao: "aprovado", criado_em: iso(agora - 40 * dia) },
         { id: "r1", nome: "Marina Exemplo", email: "marina.exemplo@voeazul.com.br", celular: "19900000001", sigla: "CPQ", cidade_uf: "Campinas/SP", regiao: "Sudeste", papel: "representante", situacao: "aprovado", criado_em: iso(agora - 30 * dia) },
         { id: "r2", nome: "Paulo Modelo", email: "paulo.modelo@voeazul.com.br", celular: "41900000002", sigla: "CWB", cidade_uf: "Curitiba/PR", regiao: "Sul", papel: "representante", situacao: "aprovado", criado_em: iso(agora - 25 * dia) },
-        { id: "r3", nome: "Ana Teste", email: "ana.teste@voeazul.com.br", celular: "81900000003", sigla: "REC", cidade_uf: "Recife/PE", regiao: "Nordeste", papel: "representante", situacao: "pendente", criado_em: iso(agora - 1 * dia) }
+        { id: "r3", nome: "Ana Teste", email: "ana.teste@voeazul.com.br", celular: "81900000003", sigla: "REC", cidade_uf: "Recife/PE", regiao: "Nordeste", papel: "representante", situacao: "pendente", criado_em: iso(agora - 1 * dia) },
+        { id: "r4", nome: "Bruno Demonstração", email: "bruno.demo@azulcargo.com.br", celular: "41900000004", sigla: "CWB", cidade_uf: "Curitiba/PR", regiao: "Sul", papel: "representante", situacao: "pendente", email_confirmado: !cfg.confirmacaoEmail, criado_em: iso(agora - 0.2 * dia) }
       ],
       pedidos: [],
       leads: []
@@ -142,6 +148,7 @@
         await espera();
         const p = db.perfis.find(x => x.email === email.trim().toLowerCase());
         if (!p) throw new Error("E-mail ou senha incorretos.");
+        if (p.email_confirmado === false) throw new Error(traduzir({ message: "Email not confirmed" }));
         usuario = { id: p.id, email: p.email };
       },
       async entrarComo(id) { usuario = { id, email: db.perfis.find(p => p.id === id).email }; },
@@ -149,11 +156,19 @@
         await espera();
         email = email.trim().toLowerCase();
         const dom = email.split("@")[1];
-        if (!(cfg.dominiosPermitidos || []).includes(dom)) throw new Error("Use seu e-mail corporativo da Azul para se cadastrar.");
+        if (!(cfg.dominiosPermitidos || []).includes(dom)) throw new Error(traduzir({ message: "Database error saving new user" }));
         if (db.perfis.some(p => p.email === email)) throw new Error("Este e-mail já tem cadastro. Entre com sua senha ou peça ao time para redefinir.");
         const id = "u" + Math.random().toString(36).slice(2, 8);
-        db.perfis.push({ id, nome: dados.nome, email, celular: dados.celular, sigla: (dados.sigla || "").toUpperCase(), cidade_uf: dados.cidade_uf, regiao: dados.regiao, papel: "representante", situacao: "pendente", criado_em: new Date().toISOString() });
+        db.perfis.push({ id, nome: dados.nome, email, celular: dados.celular, sigla: (dados.sigla || "").toUpperCase(), cidade_uf: dados.cidade_uf, regiao: dados.regiao, papel: "representante", situacao: "pendente", email_confirmado: !cfg.confirmacaoEmail, criado_em: new Date().toISOString() });
+        if (cfg.confirmacaoEmail) return { confirmar: true };
         usuario = { id, email };
+        return { confirmar: false };
+      },
+      async reenviarConfirmacao() { await espera(); },
+      // Só na demonstração: faz o papel do clique no link do e-mail.
+      async simularConfirmacao(email) {
+        const p = db.perfis.find(x => x.email === email.trim().toLowerCase());
+        p.email_confirmado = true; usuario = { id: p.id, email: p.email };
       },
       async sair() { usuario = null; },
       async trocarSenha() { await espera(); },

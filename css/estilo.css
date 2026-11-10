@@ -276,3 +276,87 @@ dialog::backdrop { background: rgba(11, 26, 56, .45); }
   .lista-leads td[data-rotulo]:not(:empty)::before { content: attr(data-rotulo) ": "; color: var(--muted); font-size: 12.5px; }
   .lista-leads td select { width: 100%; margin: 6px 0 2px; min-height: 40px; }
 }
+
+
+/* =====================================================================
+   Identidade Azul Logística | Inside Sales
+   ===================================================================== */
+:root {
+  --navy: #0A2357;
+  --navy-2: #12306F;
+  --blue: #1560D4;
+  --blue-700: #0E4CB0;
+  --blue-50: #E8F1FD;
+  --azul-claro: #7CC8FF;
+  --sobre: #1A86D8;
+  --bege: #FFF6E3;
+  --bege-borda: #F1D9A7;
+  --radius: 14px;
+  --shadow: 0 1px 2px rgba(10, 35, 87, .06), 0 6px 18px rgba(10, 35, 87, .07);
+}
+
+.sobrelinha { margin: 0 0 4px; color: var(--sobre); font-size: 13px; font-weight: 500; letter-spacing: .01em; }
+
+/* Tela de entrada */
+.acesso-lado { background: linear-gradient(160deg, var(--navy) 0%, var(--navy-2) 100%); }
+.acesso-lado::after { display: none; }
+.acesso-lado > *:not(.rota) { position: relative; z-index: 1; }
+.acesso-lado .sobrelinha { color: var(--azul-claro); font-size: 14px; }
+.rota { position: absolute; right: -170px; bottom: -250px; width: 640px; height: 640px; color: rgba(124, 200, 255, .38); pointer-events: none; z-index: 0; }
+.marca-topo { display: flex; align-items: center; gap: 12px; font-weight: 600; font-size: 14px; color: #fff; }
+.marca-topo .sep, .lateral .marca small { color: var(--azul-claro); }
+.logo { height: 34px; width: auto; display: block; }
+.passos .n { background: var(--blue); color: #fff; box-shadow: 0 0 0 4px rgba(124, 200, 255, .18); }
+.rodape-lado { font-size: 12.5px; color: rgba(255, 255, 255, .66); max-width: 42ch; margin: 0; }
+
+/* Aviso de senha em bege, como as caixas de alerta do padrão Azul */
+.aviso-senha { display: flex; gap: 10px; align-items: center; background: var(--bege); border: 1px solid var(--bege-borda); color: #6B4A00; }
+.aviso-senha .icone { width: 30px; height: 30px; background: rgba(242, 183, 5, .2); color: #8A5D00; }
+.aviso-senha .icone svg { width: 16px; height: 16px; }
+
+/* Ícones em círculo azul */
+.icone { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--blue-50); color: var(--blue); flex: none; }
+.icone svg { width: 20px; height: 20px; }
+.indicador .icone { margin-bottom: 12px; }
+.indicador.atencao .icone { background: var(--danger-50); color: var(--danger); }
+
+/* Menu lateral */
+.lateral { background: linear-gradient(180deg, var(--navy) 0%, var(--navy-2) 100%); }
+.lateral .marca { display: flex; flex-direction: column; gap: 10px; font-size: 16px; }
+.lateral .marca small { font-size: 12px; opacity: 1; }
+.logo-menu { height: 28px; }
+.nav button[aria-current=page] { box-shadow: inset 3px 0 0 var(--blue); }
+
+/* Área principal com marca d'água de rota aérea */
+.principal { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20600%20400%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%231560D4%22%20stroke-opacity%3D%22.09%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-dasharray%3D%222%2011%22%3E%3Cpath%20d%3D%22M10%20380%20C%20150%20300%2C%20260%20340%2C%20340%20220%20S%20520%2060%2C%20600%2030%22/%3E%3Cpath%20d%3D%22M60%20400%20C%20220%20330%2C%20330%20370%2C%20420%20250%20S%20560%20130%2C%20620%20110%22/%3E%3C/g%3E%3Cg%20transform%3D%22translate%28340%20220%29%20rotate%28-40%29%20scale%281.7%29%20translate%28-12%20-12%29%22%20fill%3D%22%231560D4%22%20fill-opacity%3D%22.1%22%3E%3Cpath%20d%3D%22M2%2013l8-1%205-8h2l-2%208%205%201%202-2h1l-1%203%201%203h-1l-2-2-5%201%202%208h-2l-5-8-8-1z%22/%3E%3C/g%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right -60px top -40px; background-size: 560px auto; }
+.rodape { margin: 36px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* Cards brancos arredondados com sombra leve */
+.base, .indicador, .bloco, .tabela-wrap, .vazio { border-radius: var(--radius); box-shadow: var(--shadow); }
+.base { grid-template-columns: auto 1fr auto; }
+.base > .icone { width: 48px; height: 48px; }
+.base > .icone svg { width: 24px; height: 24px; }
+.coluna { background: #EAF0F8; }
+.cartao { border-radius: 12px; }
+
+@media (max-width: 900px) {
+  .rota { width: 360px; height: 360px; right: -120px; bottom: -120px; }
+  .lateral .marca { flex-direction: row; align-items: baseline; justify-content: space-between; }
+  .base { grid-template-columns: auto 1fr; }
+  .base > div:last-child { grid-column: 1 / -1; }
+  .principal { background-size: 360px auto; }
+}
+
+.grade-2 { align-items: start; }
+
+/* Confirmação de e-mail */
+.selo { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 500; width: max-content; }
+.selo::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.selo-ok { background: #E6F6EE; color: #157347; }
+.selo-alerta { background: #FFF3D6; color: #8A5A00; }
+.vazio.confirmar .icone-grande { display: grid; width: 56px; height: 56px; margin: 0 auto 14px; }
+.vazio.confirmar .icone-grande svg { width: 28px; height: 28px; }
+.passos-confirmar { text-align: left; max-width: 440px; margin: 16px auto 20px; padding-left: 20px; color: var(--muted); line-height: 1.55; }
+.passos-confirmar li { margin-bottom: 6px; }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.carregando:has(.confirmar), .carregando:has(#b-atualizar) { min-height: 100vh; padding: 24px 16px; }

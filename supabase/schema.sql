@@ -14,7 +14,7 @@
 create table if not exists public.dominios_permitidos (
   dominio text primary key
 );
-insert into public.dominios_permitidos (dominio) values ('voeazul.com.br')
+insert into public.dominios_permitidos (dominio) values ('voeazul.com.br'), ('azulcargo.com.br')
   on conflict do nothing;
 
 -- Uma linha por pessoa cadastrada (representante ou time de Inside Sales).
@@ -30,6 +30,8 @@ create table if not exists public.perfis (
   situacao   text not null default 'pendente' check (situacao in ('pendente', 'aprovado', 'recusado')),
   criado_em  timestamptz not null default now()
 );
+-- Mostra ao time se a pessoa já clicou no link de confirmação do e-mail.
+alter table public.perfis add column if not exists email_confirmado boolean not null default false;
 
 -- Um pedido de leads por linha.
 create table if not exists public.solicitacoes (
@@ -119,7 +121,7 @@ begin
     v_regiao := null;
   end if;
 
-  insert into public.perfis (id, nome, email, celular, sigla, cidade_uf, regiao)
+  insert into public.perfis (id, nome, email, celular, sigla, cidade_uf, regiao, email_confirmado)
   values (
     new.id,
     coalesce(nullif(trim(dados ->> 'nome'), ''), new.email),
@@ -127,7 +129,8 @@ begin
     nullif(trim(dados ->> 'celular'), ''),
     coalesce(nullif(upper(trim(dados ->> 'sigla')), ''), 'SEM SIGLA'),
     nullif(trim(dados ->> 'cidade_uf'), ''),
-    v_regiao
+    v_regiao,
+    new.email_confirmed_at is not null
   );
   return new;
 end;
@@ -137,6 +140,24 @@ drop trigger if exists ao_criar_usuario on auth.users;
 create trigger ao_criar_usuario
   after insert on auth.users
   for each row execute function public.ao_criar_usuario();
+
+-- Quando a pessoa clica no link do e-mail, o perfil passa a mostrar "E-mail confirmado".
+create or replace function public.ao_confirmar_email()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  update public.perfis set email_confirmado = (new.email_confirmed_at is not null) where id = new.id;
+  return new;
+end;
+$$;
+
+drop trigger if exists ao_confirmar_email on auth.users;
+create trigger ao_confirmar_email
+  after update of email_confirmed_at on auth.users
+  for each row execute function public.ao_confirmar_email();
+
+-- Acerta quem já estava cadastrado antes desta coluna existir.
+update public.perfis p set email_confirmado = true
+  from auth.users u where u.id = p.id and u.email_confirmed_at is not null and not p.email_confirmado;
 
 -- ---------------------------------------------------------------------
 -- 4. Pedido novo: preenche dados da loja e aplica o bloqueio

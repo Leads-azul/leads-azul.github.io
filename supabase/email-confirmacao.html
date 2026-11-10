@@ -1,0 +1,13 @@
+<!-- Modelo do e-mail "Confirm signup" do Supabase (Authentication > Emails > Templates).
+     Assunto sugerido: Confirme seu e-mail no Portal de Leads -->
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#1b2433">
+  <p style="font-size:13px;color:#1A86D8;margin:0 0 4px">Inside Sales | Azul Logística</p>
+  <h2 style="color:#0A2357;margin:0 0 16px">Confirme seu e-mail</h2>
+  <p>Olá! Recebemos o pedido de acesso ao <b>Portal de Leads</b> com este e-mail.</p>
+  <p>Para continuar, clique no botão abaixo:</p>
+  <p style="margin:24px 0">
+    <a href="{{ .ConfirmationURL }}" style="background:#1560D4;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-weight:bold">Confirmar meu e-mail</a>
+  </p>
+  <p>Depois disso, o time de Inside Sales confere seus dados e libera o acesso da loja. Você recebe um aviso pelo WhatsApp.</p>
+  <p style="font-size:13px;color:#5b6578">Se você não pediu acesso ao Portal de Leads, ignore esta mensagem.</p>
+</div>

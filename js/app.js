@@ -54,6 +54,23 @@
     return (vazio !== undefined ? `<option value="">${esc(vazio)}</option>` : "") +
       lista.map(v => `<option value="${esc(v)}"${v === atual ? " selected" : ""}>${esc(v)}</option>`).join("");
   }
+  const CONFIRMA = cfg.confirmacaoEmail === true;
+  const EMPRESA = cfg.empresa || "Azul Logística";
+  const TIME = cfg.nomeDoTime || "Inside Sales";
+  const logo = (cls) => cfg.logoUrl ? `<img class="${cls || "logo"}" src="${esc(cfg.logoUrl)}" alt="${esc(EMPRESA)}">` : "";
+  const ICONES = {
+    pedido: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h5"/>',
+    leads: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2c3 .2 5.5 2.6 5.5 5.8"/>',
+    retorno: '<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>',
+    alerta: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/>',
+    fechado: '<path d="M4 12.5 9 17.5 20 6.5"/>',
+    aviao: '<path d="M2 13l8-1 5-8h2l-2 8 5 1 2-2h1l-1 3 1 3h-1l-2-2-5 1 2 8h-2l-5-8-8-1z"/>',
+    cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'
+  };
+  const icone = (n) => `<span class="icone" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONES[n]}</svg></span>`;
+  const sobre = () => `${esc(TIME)} | ${esc(EMPRESA)}`;
+  const ROTA = `<svg class="rota" viewBox="0 0 600 600" aria-hidden="true"><path d="M-40 520 C 160 420, 260 470, 360 300 S 560 120, 660 60" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2 10" stroke-linecap="round"/><path d="M-40 600 C 200 520, 330 560, 430 400 S 600 260, 680 210" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 12" stroke-linecap="round" opacity=".6"/><g transform="translate(372 286) rotate(-38) scale(1.6)" fill="currentColor" stroke="none"><path d="M2 13l8-1 5-8h2l-2 8 5 1 2-2h1l-1 3 1 3h-1l-2-2-5 1 2 8h-2l-5-8-8-1z" transform="translate(-12 -12)"/></g></svg>`;
+
   const chipSituacao = (s) => `<span class="situacao s-${slug(s)}">${esc(s)}</span>`;
   const ponto = (s) => `<span class="ponto" style="background:${COR[s] || "#999"}"></span>`;
 
@@ -79,8 +96,9 @@
   async function iniciar() {
     if (API.demo) document.getElementById("faixa-demo").hidden = false;
     try {
+      const erroLink = erroDoLink();
       const u = await API.sessao();
-      if (!u) return telaAcesso("entrar");
+      if (!u) return telaAcesso("entrar", erroLink || undefined);
       E.perfil = await API.meuPerfil();
       if (!E.perfil) { await API.sair(); return telaAcesso("entrar", "Não encontramos seu cadastro. Crie seu acesso de novo."); }
       if (E.perfil.situacao !== "aprovado") return telaEspera();
@@ -102,7 +120,8 @@
   // Acesso: entrar e criar cadastro
   // ------------------------------------------------------------------
   function telaAcesso(modo, erro) {
-    const dominio = (cfg.dominiosPermitidos || ["voeazul.com.br"])[0];
+    const dominios = cfg.dominiosPermitidos || ["voeazul.com.br"];
+    const dominio = dominios[0];
     const formEntrar = `
       <h2>Entrar</h2>
       <p class="sub">Use o e-mail e a senha que você criou neste portal.</p>
@@ -121,7 +140,7 @@
       <p class="sub">Preencha uma vez. O time de ${esc(cfg.nomeDoTime || "Inside Sales")} aprova seu acesso e avisa você pelo WhatsApp.</p>
       <form id="f-cadastro" novalidate>
         <div class="campo"><label for="c-nome">Nome completo</label><input id="c-nome" type="text" autocomplete="name" required></div>
-        <div class="campo"><label for="c-email">E-mail Azul</label><input id="c-email" type="email" autocomplete="email" required placeholder="nome.sobrenome@${esc(dominio)}"></div>
+        <div class="campo"><label for="c-email">E-mail Azul</label><input id="c-email" type="email" autocomplete="email" required placeholder="nome.sobrenome@${esc(dominio)}"><span class="dica">Aceitos: ${esc(dominios.map(d => "@" + d).join(" ou "))}.${CONFIRMA ? " Vamos mandar um link de confirmação para ele." : ""}</span></div>
         <div class="grade-2">
           <div class="campo"><label for="c-cel">Celular com DDD</label><input id="c-cel" type="tel" autocomplete="tel" required placeholder="(11) 90000-0000"></div>
           <div class="campo"><label for="c-sigla">Sigla da unidade</label><input id="c-sigla" type="text" required maxlength="10" placeholder="Ex.: AZV" style="text-transform:uppercase"></div>
@@ -130,7 +149,7 @@
           <div class="campo"><label for="c-cidade">Cidade/UF</label><input id="c-cidade" type="text" required placeholder="Campinas/SP"></div>
           <div class="campo"><label for="c-regiao">Região</label><select id="c-regiao" required>${opcoes(L.regioes, "", "Escolha")}</select></div>
         </div>
-        <div class="aviso-senha">Crie uma senha só para este portal. Não use a senha da sua conta Azul.</div>
+        <div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>
         <div class="grade-2">
           <div class="campo"><label for="c-senha">Senha</label><input id="c-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres</span></div>
           <div class="campo"><label for="c-senha2">Repita a senha</label><input id="c-senha2" type="password" autocomplete="new-password" required></div>
@@ -150,8 +169,10 @@
     $app.innerHTML = `
       <div class="acesso">
         <section class="acesso-lado">
+          ${ROTA}
+          <div class="marca-topo">${logo()}<span>${esc(TIME)} <span class="sep">|</span> ${esc(EMPRESA)}</span></div>
           <div>
-            <div class="marca">${esc(cfg.nomeDoTime || "Inside Sales")} · Leads2b</div>
+            <p class="sobrelinha">Nova plataforma de leads Leads2b</p>
             <h1>${esc(cfg.nomeDoPortal || "Portal de Leads")}</h1>
             <p>Peça bases de leads para a sua loja e registre o retorno de cada contato em um só lugar.</p>
           </div>
@@ -160,6 +181,7 @@
             <li><span class="n">2</span><span><b>Peça uma base</b>Escolha até 3 segmentos fortes na sua região.</span></li>
             <li><span class="n">3</span><span><b>Atualize os contatos</b>Finalize todos os leads para liberar a próxima base.</span></li>
           </ol>
+          <p class="rodape-lado">Ferramenta interna do time de ${esc(TIME)}. Este portal tem login próprio e não usa a senha da sua conta Azul.</p>
         </section>
         <section class="acesso-form"><div class="acesso-caixa">${modo === "cadastro" ? formCadastro : formEntrar}${atalhos}</div></section>
       </div>`;
@@ -174,7 +196,11 @@
       const email = document.getElementById("e-email").value, senha = document.getElementById("e-senha").value;
       if (!email || !senha) { erro.textContent = "Informe e-mail e senha."; erro.hidden = false; return; }
       try { await ocupado(fe.querySelector("button[type=submit]"), () => API.entrar(email, senha)); E.tela = null; iniciar(); }
-      catch (e) { erro.textContent = API.traduzir(e); erro.hidden = false; }
+      catch (e) {
+        const m = API.traduzir(e);
+        if (/não confirmado/i.test(m)) return telaConfirmar(email, true);
+        erro.textContent = m; erro.hidden = false;
+      }
     });
 
     const fc = document.getElementById("f-cadastro");
@@ -191,12 +217,52 @@
       if (v("c-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
       if (v("c-senha") !== v("c-senha2")) return mostrar("As senhas não são iguais.");
       try {
-        await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(email, v("c-senha"), {
+        const r = await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(email, v("c-senha"), {
           nome: v("c-nome"), celular: v("c-cel"), sigla: v("c-sigla").toUpperCase(), cidade_uf: v("c-cidade"), regiao: v("c-regiao")
         }));
+        if (r && r.confirmar) return telaConfirmar(email);
         E.tela = null; iniciar();
       } catch (e) { mostrar(API.traduzir(e)); }
     });
+  }
+
+  // Confirmação de e-mail: aparece logo depois do cadastro ou quando a pessoa
+  // tenta entrar sem ter clicado no link.
+  function telaConfirmar(email, veioDoLogin) {
+    $app.innerHTML = `
+      <div class="carregando"><div class="vazio confirmar" style="max-width:560px">
+        <span class="icone icone-grande" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>
+        <h2>${veioDoLogin ? "Falta confirmar seu e-mail" : "Confirme seu e-mail"}</h2>
+        <p>${veioDoLogin ? "Antes de entrar, confirme o e-mail" : "Enviamos um link de confirmação para"} <b>${esc(email)}</b>.</p>
+        <ol class="passos-confirmar">
+          <li>Abra a mensagem do <b>${esc(cfg.nomeDoPortal || "Portal de Leads")}</b> na sua caixa de entrada. Se não achar, veja o lixo eletrônico.</li>
+          <li>Clique em <b>Confirmar meu e-mail</b>.</li>
+          <li>Depois disso, o time de ${esc(TIME)} confere seus dados e libera o acesso da loja.</li>
+        </ol>
+        <div class="acoes" style="justify-content:center">
+          <button class="btn" id="b-reenviar">Reenviar e-mail</button>
+          <button class="btn" id="b-voltar">Voltar para entrar</button>
+        </div>
+        ${API.demo ? `<p class="sub" style="margin-top:18px"><button class="btn btn-primario" id="b-simular">Simular clique no link do e-mail</button></p>` : ""}
+      </div></div>`;
+    document.getElementById("b-voltar").onclick = () => telaAcesso("entrar");
+    document.getElementById("b-reenviar").onclick = async (ev) => {
+      try { await ocupado(ev.currentTarget, () => API.reenviarConfirmacao(email)); aviso("Enviamos um novo link. Confira a caixa de entrada e o lixo eletrônico."); }
+      catch (e) { aviso(API.traduzir(e), true); }
+    };
+    const s = document.getElementById("b-simular");
+    if (s) s.onclick = async () => { await API.simularConfirmacao(email); E.tela = null; iniciar(); };
+  }
+
+  // Link de confirmação vencido ou já usado: o Supabase devolve o erro no endereço.
+  function erroDoLink() {
+    const h = new URLSearchParams(location.hash.replace(/^#/, "")), q = new URLSearchParams(location.search);
+    const cod = h.get("error_code") || q.get("error_code") || h.get("error") || q.get("error");
+    if (!cod) return "";
+    history.replaceState(null, "", location.pathname);
+    return /expired|otp/i.test(cod)
+      ? "O link de confirmação venceu ou já foi usado. Entre com seu e-mail e senha: se ainda faltar confirmar, você pode pedir um novo link."
+      : "Não foi possível confirmar pelo link. Entre com seu e-mail e senha para tentar de novo.";
   }
 
   function telaEspera() {
@@ -204,6 +270,7 @@
     const recusado = p.situacao === "recusado";
     $app.innerHTML = `
       <div class="carregando"><div class="vazio" style="max-width:520px">
+        ${CONFIRMA && !recusado && p.email_confirmado !== false ? `<p class="selo selo-ok" style="margin:0 auto 10px">E-mail confirmado</p>` : ""}
         <h2>${recusado ? "Seu acesso não foi aprovado" : "Cadastro enviado"}</h2>
         <p>${recusado
           ? `Fale com o time de ${esc(cfg.nomeDoTime || "Inside Sales")} para revisar o cadastro da loja ${esc(p.sigla)}.`
@@ -241,7 +308,7 @@
     $app.innerHTML = `
       <div class="app">
         <aside class="lateral">
-          <div class="marca">${esc(cfg.nomeDoPortal || "Portal de Leads")}<small>${esc(cfg.nomeDoTime || "Inside Sales")} · Leads2b</small></div>
+          <div class="marca">${logo("logo logo-menu")}<span>${esc(cfg.nomeDoPortal || "Portal de Leads")}<small>${esc(TIME)} | ${esc(EMPRESA)}</small></span></div>
           <nav class="nav" aria-label="Menu">
             ${itens.map(([id, nome, n]) => `<button data-tela="${id}"${E.tela === id ? ' aria-current="page"' : ""}><span>${nome}</span>${n ? `<span class="contador">${n}</span>` : ""}</button>`).join("")}
           </nav>
@@ -250,7 +317,7 @@
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
-        <main class="principal" id="principal">${conteudo()}</main>
+        <main class="principal" id="principal">${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}</p></main>
       </div>`;
 
     $app.querySelectorAll("[data-tela]").forEach(b => b.addEventListener("click", () => { E.tela = b.dataset.tela; E.f.busca = ""; desenhar(); window.scrollTo(0, 0); }));
@@ -480,7 +547,7 @@
     }
     const trilha = doBase.length ? `<div class="trilha" aria-hidden="true">${doBase.slice().sort((a, b) => final(b) - final(a)).map(l =>
       final(l) ? `<span class="fim" style="background:${COR[l.status]}" title="${esc(l.status)}"></span>` : `<span title="${esc(l.status)}" style="border-color:${COR[l.status]}"></span>`).join("")}</div>` : "";
-    return `<section class="base"><div><h2>${titulo}</h2><p>${texto}</p>${trilha}</div><div>${acao}</div></section>`;
+    return `<section class="base">${icone("aviao")}<div><h2>${titulo}</h2><p>${texto}</p>${trilha}</div><div>${acao}</div></section>`;
   }
 
   function telaLeadsRep() {
@@ -490,7 +557,7 @@
     lista = filtrarLeads(lista);
     const temLeads = E.leads.length > 0;
     return `
-      <div class="topo"><div><h1>Meus leads</h1><p>Loja ${esc(E.perfil.sigla)}${E.perfil.cidade_uf ? ", " + esc(E.perfil.cidade_uf) : ""}</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Meus leads</h1><p>Loja ${esc(E.perfil.sigla)}${E.perfil.cidade_uf ? ", " + esc(E.perfil.cidade_uf) : ""}</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       ${faixaBase()}
       ${temLeads ? `
@@ -515,7 +582,7 @@
     const pode = podePedir();
     const motivo = emAndamento() ? "Você já tem um pedido em andamento." : abertosLoja().length ? `Finalize os ${abertosLoja().length} leads em aberto para pedir uma nova base.` : "";
     return `
-      <div class="topo"><div><h1>Meus pedidos</h1><p>${pode ? "Você pode pedir uma nova base agora." : esc(motivo)}</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Meus pedidos</h1><p>${pode ? "Você pode pedir uma nova base agora." : esc(motivo)}</p></div>
         <div class="acoes"><button class="btn btn-primario" data-acao="novoPedido"${pode ? "" : " disabled"}>Pedir nova base</button></div></div>
       ${E.pedidos.length ? `<div class="tabela-wrap"><table>
         <thead><tr><th>Pedido</th><th>Data</th><th>Segmentos</th><th>Empresas indicadas</th><th>Situação</th><th>Leads finalizados</th></tr></thead>
@@ -568,7 +635,7 @@
       return true;
     });
     return `
-      <div class="topo"><div><h1>Pedidos</h1><p>Pedidos de leads feitos pelas lojas.</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Pedidos</h1><p>Pedidos de leads feitos pelas lojas.</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       <div class="filtros">
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Loja, representante, segmento ou responsável"></div>
@@ -752,7 +819,7 @@
     const lista = filtrarLeads(E.leads);
     const lojas = [...new Set(E.leads.map(l => l.sigla))].sort();
     return `
-      <div class="topo"><div><h1>Leads</h1><p>${E.leads.length} leads enviados para ${lojas.length} loja(s).</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Leads</h1><p>${E.leads.length} leads enviados para ${lojas.length} loja(s).</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button><button class="btn" data-acao="exportar">Exportar Excel</button></div></div>
       <div class="filtros">
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Empresa, CNPJ, contato ou telefone"></div>
@@ -787,9 +854,11 @@
     const lista = E.perfis.filter(p => p.situacao === E.f.cadastro && (!b || norm([p.nome, p.email, p.sigla, p.cidade_uf].join(" ")).includes(b)));
     const msg = (p) => p.situacao === "aprovado"
       ? `Olá, ${p.nome.split(" ")[0]}! Seu acesso ao Portal de Leads foi liberado. Entre em ${urlPortal()} com seu e-mail e a senha que você criou.`
-      : `Olá, ${p.nome.split(" ")[0]}! Recebemos seu cadastro no Portal de Leads.`;
+      : CONFIRMA && p.email_confirmado === false
+        ? `Olá, ${p.nome.split(" ")[0]}! Recebemos seu cadastro no Portal de Leads. Falta confirmar seu e-mail: abra a mensagem do Portal de Leads (veja também o lixo eletrônico) e clique em "Confirmar meu e-mail".`
+        : `Olá, ${p.nome.split(" ")[0]}! Recebemos seu cadastro no Portal de Leads.`;
     return `
-      <div class="topo"><div><h1>Cadastros</h1><p>Confira se o e-mail e a sigla batem com a loja antes de aprovar.</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>Confira se o e-mail e a sigla batem com a loja antes de aprovar.</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       <div class="filtros">
         <div class="pilulas" role="group" aria-label="Situação do cadastro">
@@ -803,12 +872,12 @@
           const eu = p.id === E.perfil.id;
           const link = zap(p.celular, msg(p));
           return `<tr>
-            <td><b>${esc(p.nome)}</b><div class="sec">${esc(p.email)}</div></td>
+            <td><b>${esc(p.nome)}</b><div class="sec">${esc(p.email)}</div>${CONFIRMA && p.situacao === "pendente" ? (p.email_confirmado === false ? `<span class="selo selo-alerta">E-mail não confirmado</span>` : `<span class="selo selo-ok">E-mail confirmado</span>`) : ""}</td>
             <td>${esc(p.sigla)}<div class="sec">${esc(p.cidade_uf || "")}</div></td>
             <td>${esc(p.regiao || "")}</td><td>${esc(p.celular || "")}</td>
             <td>${p.papel === "time" ? "Time" : "Representante"}</td><td>${data(p.criado_em)}</td>
             <td><div class="acoes">
-              ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${p.id}">Aprovar</button>` : ""}
+              ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${p.id}"${CONFIRMA && p.email_confirmado === false ? ' disabled title="Aprove depois que a pessoa confirmar o e-mail"' : ""}>Aprovar</button>` : ""}
               ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${p.id}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
               ${p.situacao === "aprovado" && !eu ? (p.papel === "time" ? `<button class="btn btn-p" data-acao="tornarRep" data-id="${p.id}">Tornar representante</button>` : `<button class="btn btn-p" data-acao="tornarTime" data-id="${p.id}">Tornar time</button>`) : ""}
               ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${p.id}">Redefinir senha</button>` : ""}
@@ -873,14 +942,14 @@
     const lojas = Object.values(porLoja).sort((a, b) => b.par - a.par || (b.total - b.fin) - (a.total - a.fin) || b.total - a.total);
 
     return `
-      <div class="topo"><div><h1>Painel</h1><p>Retorno das lojas sobre os leads enviados.</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Painel</h1><p>Retorno das lojas sobre os leads enviados.</p></div>
         <div class="acoes"><div class="campo" style="margin:0;min-width:180px"><select aria-label="Região" data-filtro="regiao">${opcoes(L.regioes, reg, "Todas as regiões")}</select></div><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       <div class="indicadores">
-        <div class="indicador"><div class="valor">${aguardando}</div><div class="rotulo">Pedidos aguardando o time</div></div>
-        <div class="indicador"><div class="valor">${leads.length}</div><div class="rotulo">Leads enviados</div></div>
-        <div class="indicador"><div class="valor">${pct}%</div><div class="rotulo">Leads com retorno da loja</div></div>
-        <div class="indicador${parados ? " atencao" : ""}"><div class="valor">${parados}</div><div class="rotulo">Leads parados há mais de ${PRAZO} dias</div></div>
-        <div class="indicador"><div class="valor">${fechados}</div><div class="rotulo">Clientes fechados</div></div>
+        <div class="indicador">${icone("pedido")}<div class="valor">${aguardando}</div><div class="rotulo">Pedidos aguardando o time</div></div>
+        <div class="indicador">${icone("leads")}<div class="valor">${leads.length}</div><div class="rotulo">Leads enviados</div></div>
+        <div class="indicador">${icone("retorno")}<div class="valor">${pct}%</div><div class="rotulo">Leads com retorno da loja</div></div>
+        <div class="indicador${parados ? " atencao" : ""}">${icone("alerta")}<div class="valor">${parados}</div><div class="rotulo">Leads parados há mais de ${PRAZO} dias</div></div>
+        <div class="indicador">${icone("fechado")}<div class="valor">${fechados}</div><div class="rotulo">Clientes fechados</div></div>
       </div>
       <div class="paineis">
         <section class="bloco"><h2>Leads por status</h2>${barras(STATUS.map(s => [s.nome, leads.filter(l => l.status === s.nome).length, s.cor]))}</section>
@@ -914,7 +983,7 @@
       });
     });
     return `
-      <div class="topo"><div><h1>Minha conta</h1><p>Para corrigir nome, loja ou celular, fale com o time de ${esc(cfg.nomeDoTime || "Inside Sales")}.</p></div></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha conta</h1><p>Para corrigir nome, loja ou celular, fale com o time de ${esc(cfg.nomeDoTime || "Inside Sales")}.</p></div></div>
       <div class="paineis">
         <section class="bloco"><h2>Meus dados</h2>
           <dl class="dados">

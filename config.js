@@ -11,6 +11,9 @@ window.PORTAL_CONFIG = {
 
   nomeDoPortal: "Portal de Leads",
   nomeDoTime: "Inside Sales",
-  dominiosPermitidos: ["voeazul.com.br"], // o banco também confere isso
-  prazoRetornoDias: 7                     // lead sem retorno há mais dias que isso fica em alerta
+  empresa: "Azul Logística",
+  logoUrl: "",              // ex.: "img/logo-azul-logistica.png" (deixe vazio enquanto não houver o arquivo aprovado)
+  dominiosPermitidos: ["voeazul.com.br", "azulcargo.com.br"], // o banco também confere isso
+  prazoRetornoDias: 7,                    // lead sem retorno há mais dias que isso fica em alerta
+  confirmacaoEmail: false                 // true só depois de ligar "Confirm email" e configurar o remetente (SMTP) no Supabase
 };
