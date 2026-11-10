@@ -6,8 +6,8 @@
 // Com os dois campos vazios, o site abre em modo demonstração.
 // =====================================================================
 window.PORTAL_CONFIG = {
-  supabaseUrl: "",          // ex.: "https://abcdefghijk.supabase.co"
-  supabaseKey: "",          // chave "publishable" ou "anon public"
+  supabaseUrl: "https://jgdwdkmqylrqboqinmxt.supabase.co",          // ex.: "https://abcdefghijk.supabase.co"
+  supabaseKey: "sb_publishable_9HbMMrtPPfwfDW2LE-ud2g_vN5rlEr6",          // chave "publishable" ou "anon public"
 
   nomeDoPortal: "Portal de Leads",
   nomeDoTime: "Inside Sales",
