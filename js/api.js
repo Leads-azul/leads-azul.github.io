@@ -109,14 +109,13 @@
       async entrar(email, senha) { await auth.signInWithEmailAndPassword(email.trim().toLowerCase(), senha); },
       async esqueciSenha(email) { await auth.sendPasswordResetEmail(email.trim().toLowerCase(), continuar()); },
 
-      // Cadastro: cria o login, manda o e-mail de confirmação e grava perfil, unidade e acesso.
+      // Cadastro: cria o login e grava perfil, unidade e acesso (sem e-mail de confirmação; o time aprova).
       async cadastrar(email, senha, dados) {
         email = email.trim().toLowerCase();
         // Refazer cadastro (cadastro excluído pelo time): reaproveita o login que já existe.
         const atual = auth.currentUser;
         const cred = atual && atual.email === email ? { user: atual } : await auth.createUserWithEmailAndPassword(email, senha);
         const uid = cred.user.uid;
-        if (!cred.user.emailVerified) { try { await cred.user.sendEmailVerification(continuar()); } catch (e) { /* reenviável depois */ } }
         const lote = db.batch();
         const exec = !dados.time && dados.cargo === "Executivo";
         const sigla = dados.time ? "" : exec ? siglaExecutivo(uid) : dados.sigla.toUpperCase();
@@ -129,7 +128,7 @@
           lote.set(db.doc(`acessos/${uid}_${sigla}`), { uid, sigla, situacao: "pendente", principal: true, nome: dados.nome, email, criadoEm: TS() });
         }
         await lote.commit();
-        return { confirmar: !cred.user.emailVerified };
+        return { confirmar: false };
       },
       // Time: exclui a pessoa e os acessos dela. Pedidos, leads e histórico continuam salvos.
       async excluirCadastro(uid) {
@@ -376,7 +375,7 @@
           db.acessos.push({ id: `${id}_${sigla}`, uid: id, sigla, situacao: "pendente", principal: true, nome: dados.nome, email });
         }
         usuario = { id, email };
-        return { confirmar: true };
+        return { confirmar: false };
       },
       async reenviarConfirmacao() { await espera(); },
       async conferirConfirmacao() { return !!(eu() && eu().emailVerificado); },

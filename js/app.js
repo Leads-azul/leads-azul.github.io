@@ -115,8 +115,6 @@
     try {
       const u = await API.sessao();
       if (!u) return telaAcesso("entrar");
-      if (!u.verificado) return telaConfirmar(u.email, true);
-      await API.conferirConfirmacao().catch(() => {});
       E.perfil = await API.meuPerfil();
       if (!E.perfil) return telaSemCadastro(u.email);
       if (E.perfil.situacao !== "aprovado") return telaEspera();
@@ -164,7 +162,7 @@
 
     const formCadastro = `
       <h2>Criar meu acesso</h2>
-      <p class="sub">Preencha uma vez. Você confirma o e-mail e o time de ${esc(TIME)} libera o acesso da unidade.</p>
+      <p class="sub">Preencha uma vez. Depois o time de ${esc(TIME)} confere seus dados e libera o acesso.</p>
       <form id="f-cadastro" novalidate>
         <div class="campo"><label>Eu sou</label><div class="escolha" role="radiogroup">
           ${CARGOS.map((c, i) => `<label><input type="radio" name="c-cargo" value="${esc(c)}"${i === 0 ? " checked" : ""}> ${esc(c === "Inside Sales" ? "Time de " + TIME : c === "Executivo" ? "Executivo, coordenador ou gerente" : c)}</label>`).join("")}</div></div>
@@ -234,7 +232,7 @@
         const email = document.getElementById("e-email").value.trim();
         const erroEl = document.getElementById("e-erro");
         if (!email) { erroEl.textContent = "Digite seu e-mail acima e clique de novo em \"Esqueci minha senha\"."; erroEl.hidden = false; return; }
-        try { await ocupado(ev.currentTarget, () => API.esqueciSenha(email)); aviso("Se o e-mail tiver cadastro, enviamos um link para criar uma senha nova. Veja também o lixo eletrônico."); }
+        try { await ocupado(ev.currentTarget, () => API.esqueciSenha(email)); aviso(`Se o e-mail tiver cadastro, enviamos um link para criar uma senha nova. Se não chegar em alguns minutos (veja também o lixo eletrônico), fale com o time de ${TIME}.`); }
         catch (e) { erroEl.textContent = API.traduzir(e); erroEl.hidden = false; }
       });
     }
@@ -274,7 +272,7 @@
           const r = await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(em, v("c-senha"), {
             nome: v("c-nome"), celular: v("c-cel"), sigla: sg, cidade_uf: v("c-cidade"), regiao: v("c-regiao"), time: ehDoTime, cargo: cargo()
           }));
-          if (r && r.confirmar === false) { E.tela = null; iniciar(); } else telaConfirmar(em);
+          E.tela = null; E.cadastroNovo = true; iniciar();
         } catch (e) { mostrar(API.traduzir(e)); }
       });
     }
@@ -335,8 +333,8 @@
     const unid = (p.unidades || []).map(u => u.nome ? "da sua carteira" : "da unidade " + u.sigla).join(", ");
     $app.innerHTML = `
       <div class="carregando"><div class="vazio" style="max-width:520px">
-        ${!recusado ? `<p class="selo selo-ok" style="margin:0 auto 10px">E-mail confirmado</p>` : ""}
-        <h2>${recusado ? "Seu acesso não foi aprovado" : "Cadastro enviado"}</h2>
+        ${!recusado && E.cadastroNovo ? `<p class="selo selo-ok" style="margin:0 auto 10px">Cadastro realizado</p>` : ""}
+        <h2>${recusado ? "Seu acesso não foi aprovado" : E.cadastroNovo ? "Recebemos seu cadastro" : "Cadastro aguardando aprovação"}</h2>
         <p>${recusado
           ? `Fale com o time de ${esc(TIME)} para revisar o seu cadastro.`
           : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Você recebe um aviso pelo WhatsApp quando estiver pronto.`}</p>
@@ -434,11 +432,7 @@
     tornarRep: (b) => mudar(() => API.atualizarPerfil(b.dataset.id, { papel: "representante" }), "Acesso alterado para representante."),
     aprovarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "aprovado"), "Unidade liberada."),
     recusarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "recusado"), "Unidade recusada."),
-    senha: async (b) => {
-      const p = E.perfis.find(x => x.id === b.dataset.id);
-      if (!confirm(`Enviar para ${p.email} um e-mail com o link para criar uma senha nova?`)) return;
-      try { await ocupado(b, () => API.enviarRedefinicao(p.email)); aviso("E-mail de redefinição enviado."); } catch (e) { aviso(API.traduzir(e), true); }
-    },
+    senha: (b) => janelaSenha(b.dataset.id),
     pedirUnidade: () => janelaPedirUnidade(),
     excluir: (b) => janelaExcluir(b.dataset.id)
   };
@@ -1145,9 +1139,7 @@
     const extras = E.acessos.filter(a => a.situacao === "pendente" && !a.principal && perfilDe(a.uid).situacao === "aprovado");
     const msg = (p) => p.situacao === "aprovado"
       ? `Olá, ${primeiroNome(p.nome)}! Seu acesso ao Portal de Leads foi liberado. Entre em ${urlPortal()} com seu e-mail e a senha que você criou.`
-      : !p.emailVerificado
-        ? `Olá, ${primeiroNome(p.nome)}! Recebemos seu cadastro no Portal de Leads. Falta confirmar seu e-mail: abra a mensagem do Portal de Leads (veja também o lixo eletrônico) e clique no link.`
-        : `Olá, ${primeiroNome(p.nome)}! Recebemos seu cadastro no Portal de Leads e já estamos conferindo.`;
+      : `Olá, ${primeiroNome(p.nome)}! Recebemos seu cadastro no Portal de Leads e já estamos conferindo.`;
     return `
       <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar.</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
@@ -1172,16 +1164,16 @@
           const us = unidadesDe(p.id);
           const siglaOk = p.cargo !== "Representante" || API.siglaDoEmail(p.email) === p.siglaPrincipal;
           return `<tr>
-            <td><b>${esc(p.nome)}</b> <span class="etiqueta">${esc(p.cargo || "Representante")}</span><div class="sec">${esc(p.email)}</div>${p.situacao === "pendente" ? (p.emailVerificado ? `<span class="selo selo-ok">E-mail confirmado</span>` : `<span class="selo selo-alerta">E-mail não confirmado</span>`) : ""}</td>
+            <td><b>${esc(p.nome)}</b> <span class="etiqueta">${esc(p.cargo || "Representante")}</span><div class="sec">${esc(p.email)}</div></td>
             <td>${us.length ? us.map(a => { const u = unidadeInfo(a.sigla); return `<div><b>${esc(u.nome || a.sigla)}</b>${a.principal ? "" : " (extra)"} <span class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}${a.situacao !== "aprovado" ? " · " + esc(a.situacao) : ""}</span></div>`; }).join("") : `<span class="sec">${p.papel === "time" || !p.siglaPrincipal ? "Time (sem unidade)" : "–"}</span>`}
               ${!siglaOk ? `<div class="sec" style="color:var(--danger)">A sigla não bate com o e-mail</div>` : ""}</td>
             <td>${esc(foneBonito(p.celular || ""))}</td>
             <td>${p.papel === "time" ? "Time (vê tudo)" : "Só as próprias unidades"}</td><td>${data(p.criadoEm)}</td>
             <td><div class="acoes">
-              ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}"${!p.emailVerificado ? ' disabled title="Aprove depois que a pessoa confirmar o e-mail"' : ""}>Aprovar</button>` : ""}
+              ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>` : ""}
               ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
               ${p.situacao === "aprovado" && !eu ? (p.papel === "time" ? `<button class="btn btn-p" data-acao="tornarRep" data-id="${esc(p.id)}">Tornar representante</button>` : `<button class="btn btn-p" data-acao="tornarTime" data-id="${esc(p.id)}">Tornar time</button>`) : ""}
-              ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Enviar nova senha</button>` : ""}
+              ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Esqueceu a senha</button>` : ""}
               ${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
               ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}
             </div></td></tr>`;
@@ -1204,6 +1196,29 @@
     (j) => {
       j.querySelector("#x-ok").addEventListener("click", async (ev) => {
         try { await ocupado(ev.currentTarget, () => API.excluirCadastro(id)); fechar(); await recarregar(); aviso("Cadastro excluído. Os pedidos e leads continuam salvos."); }
+        catch (e) { aviso(API.traduzir(e), true); }
+      });
+    });
+  }
+
+  // Senha esquecida: o e-mail de redefinição pode ser barrado pela Azul, então o time tem um caminho manual.
+  function janelaSenha(id) {
+    const p = E.perfis.find(x => x.id === id);
+    abrir(`
+      <div class="janela-topo"><div><h2>Esqueceu a senha</h2><p>${esc(p.nome)} · ${esc(p.email)}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo">
+        <p><b>1. Tente o link.</b> O portal manda um e-mail para a pessoa criar uma senha nova. Ele pode não chegar, porque o e-mail da Azul costuma barrar o remetente.</p>
+        <p><b>2. Se não chegar:</b></p>
+        <ol style="margin:0 0 10px 20px;line-height:1.6">
+          <li>No Firebase, abra <b>Authentication › Usuários</b>, procure <b>${esc(p.email)}</b> e use <b>⋮ › Excluir conta</b>.</li>
+          <li>Aqui no portal, clique em <b>Excluir cadastro</b> nesta pessoa. Os pedidos, leads e histórico continuam salvos.</li>
+          <li>Peça para a pessoa criar o acesso de novo, com o mesmo e-mail e uma senha nova, e aprove.</li>
+        </ol>
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="x-link">Enviar o link</button></div>`,
+    (j) => {
+      j.querySelector("#x-link").addEventListener("click", async (ev) => {
+        try { await ocupado(ev.currentTarget, () => API.enviarRedefinicao(p.email)); aviso("Link enviado. Se não chegar, siga o passo 2."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
