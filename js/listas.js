@@ -2,17 +2,34 @@
 window.LISTAS = {
   regioes: ["Sudeste", "Sul", "Centro Oeste", "Nordeste", "Norte"],
 
-  // Status do lead, na ordem das colunas do Kanban.
+  // Status do lead, na ordem da prospecção (é a ordem das colunas do Kanban).
+  // trava: true = enquanto houver lead neste status, a unidade não pode pedir uma nova base.
   status: [
-    { nome: "Novo",             cor: "#8A94A6", final: false },
-    { nome: "Tentando contato", cor: "#C9820C", final: false },
-    { nome: "Em negociação",    cor: "#1A8FD6", final: false },
-    { nome: "Fechou",           cor: "#1E9157", final: true  },
-    { nome: "Sem interesse",    cor: "#7357C2", final: true  },
-    { nome: "Contato inválido", cor: "#D14343", final: true  }
-  ],
+    { nome: "Novo",              cor: "#8A94A6", trava: true,  desc: "Lead recebido, ainda sem nenhum contato." },
+    { nome: "Prospecção",        cor: "#C9820C", trava: true,  desc: "Tentando falar com a empresa por ligação, WhatsApp ou e-mail." },
+    { nome: "Em negociação",     cor: "#1A8FD6", trava: false, desc: "Conversa em andamento, com proposta ou cotação em análise." },
+    { nome: "Em implantação",    cor: "#0E9AA7", trava: false, desc: "Cliente aceitou a proposta e está em cadastro e ajustes antes do primeiro envio." },
+    { nome: "Embarque iniciado", cor: "#1E9157", trava: false, desc: "Cliente já fez o primeiro embarque." },
+    { nome: "Cliente Azul",      cor: "#12306F", trava: false, desc: "A empresa já embarca com a Azul. Registre os detalhes na observação." },
+    { nome: "Sem interesse",     cor: "#7357C2", trava: false, desc: "A empresa não quer o serviço agora." },
+    { nome: "Contato inválido",  cor: "#D14343", trava: false, desc: "Telefone ou e-mail não existem ou não são da empresa." }
+  ].map(s => ({ ...s, final: !s.trava })),
 
   situacoesPedido: ["Nova", "Em extração", "Enviada", "Concluída", "Sem leads", "Cancelada"],
+
+  // Quem se cadastra. "Inside Sales" não tem unidade.
+  cargos: ["Representante", "Executivo", "Inside Sales"],
+
+  // Máximo de leads por pedido e limite de unidades por representante.
+  leadsPorPedido: 10,
+  unidadesPorPessoa: 5,
+
+  // Mensagens prontas. Variáveis: {contato} {empresa} {nome} {sigla} {cidade} {celular}
+  mensagens: {
+    whatsapp: "Olá{contato}, tudo bem? Aqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nTrabalhamos com envios para todo o Brasil e gostaria de apresentar uma proposta para a {empresa}.\nPodemos conversar rapidamente sobre o volume de envios de vocês?",
+    emailAssunto: "Azul Logística: proposta de envios para {empresa}",
+    email: "Olá{contato}, tudo bem?\n\nAqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nTrabalhamos com envios para todo o Brasil e gostaria de apresentar uma proposta para a {empresa}.\n\nPosso te ligar para entender o volume de envios de vocês?\n\nAbraço,\n{nome}\nAzul Logística · {celular}"
+  },
 
   segmentos: `Abatedouros
 Academias

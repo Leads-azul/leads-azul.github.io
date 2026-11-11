@@ -1,0 +1,229 @@
+rules_version = '2';
+
+// =====================================================================
+// Portal de Leads · regras de segurança do Firestore
+// Cole este arquivo inteiro em Firestore > Regras e clique em Publicar.
+//
+// Estrutura:
+//   perfis/{uid}                 pessoa (representante ou time)
+//   unidades/{SIGLA}             unidade (loja)
+//   acessos/{uid}_{SIGLA}        quem pode usar qual unidade
+//   pedidos/{id}                 pedido de leads, com até 10 leads dentro (campo "leads": l0..l9)
+//   pedidos/{id}/historico/{id}  histórico de cada lead do pedido
+// =====================================================================
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- quem é quem ----------
+    function logado() { return request.auth != null; }
+    function emailToken() { return request.auth.token.email.lower(); }
+    function verificado() { return logado() && request.auth.token.email_verified == true; }
+    function dominioOk() { return emailToken().matches('^[a-z0-9._%+-]+@(voeazul|azulcargo)[.]com[.]br$'); }
+    // Sigla no começo do e-mail: qoc04.fernanda@voeazul.com.br -> QOC04
+    function siglaDoEmail() { return emailToken().split('@')[0].split('[.]')[0].upper(); }
+    // Executivo (e coordenador/gerente) não tem loja: a carteira dele é "EX" + começo do id do login.
+    function siglaExecutivo() { return ('EX' + request.auth.uid[0:8]).upper(); }
+
+    function caminhoPerfil() { return /databases/$(database)/documents/perfis/$(request.auth.uid); }
+    function perfil() { return get(caminhoPerfil()).data; }
+    function aprovado() { return verificado() && exists(caminhoPerfil()) && perfil().situacao == 'aprovado'; }
+    function ehTime() { return aprovado() && perfil().papel == 'time'; }
+
+    function caminhoAcesso(sigla) { return /databases/$(database)/documents/acessos/$(request.auth.uid + '_' + sigla); }
+    function usaUnidade(sigla) {
+      return aprovado() && exists(caminhoAcesso(sigla)) && get(caminhoAcesso(sigla)).data.situacao == 'aprovado';
+    }
+
+    // ---------- listas ----------
+    function regioes() { return ['Sudeste', 'Sul', 'Centro Oeste', 'Nordeste', 'Norte']; }
+    function statusLead() { return ['Novo', 'Prospecção', 'Em negociação', 'Em implantação', 'Embarque iniciado', 'Cliente Azul', 'Sem interesse', 'Contato inválido']; }
+    function statusQueTrava() { return ['Novo', 'Prospecção']; }
+    function chavesLead() { return ['l0', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8', 'l9']; }
+    function tiposHistorico() { return ['recebido', 'status', 'contato_valido', 'whatsapp', 'email', 'ligacao', 'observacao']; }
+
+    function texto(v, max) { return v is string && v.size() <= max; }
+    function textoOuNulo(v, max) { return v == null || texto(v, max); }
+    function mesmoDia(t) {
+      // Dia no horário de Brasília (UTC-3).
+      return math.floor((t.toMillis() - 10800000) / 86400000) == math.floor((request.time.toMillis() - 10800000) / 86400000);
+    }
+
+    // ---------- pessoas ----------
+    match /perfis/{uid} {
+      allow read: if logado() && (request.auth.uid == uid || ehTime());
+
+      // Cadastro: a própria pessoa cria o perfil, sempre como representante aguardando.
+      allow create: if logado() && request.auth.uid == uid && dominioOk()
+        && request.resource.data.keys().hasOnly(['nome', 'email', 'celular', 'cargo', 'papel', 'situacao', 'emailVerificado', 'siglaPrincipal', 'criadoEm'])
+        && request.resource.data.email == emailToken()
+        && texto(request.resource.data.nome, 120) && request.resource.data.nome.size() >= 2
+        && texto(request.resource.data.celular, 30)
+        && request.resource.data.papel == 'representante'
+        && request.resource.data.situacao == 'pendente'
+        && request.resource.data.emailVerificado == false
+        // Representante e executivo: a sigla da unidade é o começo do e-mail. Time de Inside Sales: sem unidade.
+        && ((request.resource.data.cargo == 'Representante' && request.resource.data.siglaPrincipal == siglaDoEmail())
+          || (request.resource.data.cargo == 'Executivo' && request.resource.data.siglaPrincipal == siglaExecutivo())
+          || (request.resource.data.cargo == 'Inside Sales' && request.resource.data.siglaPrincipal == ''))
+        && request.resource.data.criadoEm == request.time;
+
+      allow update: if
+        // o time aprova, recusa, muda o papel e corrige nome/celular
+        (ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao'])
+          && request.resource.data.papel in ['representante', 'time']
+          && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'])
+        // a própria pessoa marca o e-mail como confirmado (só se o Firebase confirmou)
+        || (logado() && request.auth.uid == uid && request.auth.token.email_verified == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emailVerificado'])
+          && request.resource.data.emailVerificado == true);
+      // O time exclui o cadastro (os pedidos, leads e histórico continuam salvos).
+      allow delete: if ehTime() && uid != request.auth.uid;
+    }
+
+    // ---------- unidades ----------
+    match /unidades/{sigla} {
+      allow read: if logado();
+      allow create: if logado() && sigla.matches('^[A-Z0-9]{2,10}$')
+        && request.resource.data.keys().hasOnly(['sigla', 'cidade_uf', 'regiao', 'pedidoAtual', 'criadaEm', 'nome', 'tipo'])
+        && (!('tipo' in request.resource.data) || (request.resource.data.tipo == 'executivo' && sigla == siglaExecutivo() && texto(request.resource.data.nome, 80)))
+        && request.resource.data.sigla == sigla
+        && texto(request.resource.data.cidade_uf, 80)
+        && request.resource.data.regiao in regioes()
+        && request.resource.data.pedidoAtual == null
+        && request.resource.data.criadaEm == request.time;
+      allow update: if
+        (ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome']))
+        // o representante só troca o pedido atual, e só no mesmo envio que cria o pedido novo
+        || (usaUnidade(sigla)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pedidoAtual'])
+          && podePedirNovo(sigla, resource.data.pedidoAtual, request.resource.data.pedidoAtual));
+      allow delete: if ehTime();
+    }
+
+    function caminhoPedido(id) { return /databases/$(database)/documents/pedidos/$(id); }
+    function pedidoLiberado(id) {
+      let p = get(caminhoPedido(id)).data;
+      return p.situacao in ['Concluída', 'Sem leads', 'Cancelada'] || (p.situacao == 'Enviada' && p.liberada == true);
+    }
+    function podePedirNovo(sigla, atual, novo) {
+      return novo is string
+        && !exists(caminhoPedido(novo)) && existsAfter(caminhoPedido(novo))
+        && getAfter(caminhoPedido(novo)).data.sigla == sigla
+        && (atual == null || pedidoLiberado(atual));
+    }
+
+    // ---------- acessos às unidades ----------
+    match /acessos/{aid} {
+      allow read: if logado() && (resource.data.uid == request.auth.uid || ehTime());
+      allow create: if (logado()
+          && aid == request.auth.uid + '_' + request.resource.data.sigla
+          && request.resource.data.keys().hasOnly(['uid', 'sigla', 'situacao', 'principal', 'nome', 'email', 'criadoEm'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == emailToken()
+          && texto(request.resource.data.nome, 120)
+          && request.resource.data.situacao == 'pendente'
+          && (request.resource.data.principal == false || request.resource.data.sigla == siglaDoEmail() || request.resource.data.sigla == siglaExecutivo())
+          && (exists(/databases/$(database)/documents/unidades/$(request.resource.data.sigla))
+            || existsAfter(/databases/$(database)/documents/unidades/$(request.resource.data.sigla)))
+          && request.resource.data.criadoEm == request.time)
+        || ehTime();
+      allow update: if ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+        && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'];
+      allow delete: if ehTime() || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao != 'aprovado');
+    }
+
+    // ---------- pedidos (com os leads dentro) ----------
+    // "travando" = quantos leads estão em Novo ou Prospecção. "liberada" = tem leads e travando é 0.
+    // O representante muda um lead por vez e informa qual em "alterado"; as regras conferem só esse lead.
+    function trava(status) { return status in statusQueTrava(); }
+    function contadorCerto(antes, depois) {
+      let o = resource.data.travando;
+      let n = request.resource.data.travando;
+      return (trava(antes) == trava(depois) && n == o)
+        || (trava(antes) && !trava(depois) && n == o - 1)
+        || (!trava(antes) && trava(depois) && n == o + 1);
+    }
+    function situacaoDoRep() {
+      return request.resource.data.situacao == resource.data.situacao
+        || (resource.data.situacao in ['Enviada', 'Concluída']
+          && ((request.resource.data.situacao == 'Concluída' && request.resource.data.liberada == true)
+            || (request.resource.data.situacao == 'Enviada' && request.resource.data.liberada == false)));
+    }
+    function repAtualizouUmLead() {
+      let k = request.resource.data.alterado;
+      let novo = request.resource.data.leads[k];
+      let velho = resource.data.leads[k];
+      return k in chavesLead() && k in resource.data.leads
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leads', 'liberada', 'travando', 'alterado', 'situacao', 'concluida_em'])
+        && request.resource.data.leads.diff(resource.data.leads).affectedKeys().hasOnly([k])
+        && novo.diff(velho).affectedKeys().hasOnly(['status', 'data_contato', 'contato_valido', 'atualizado_em'])
+        && novo.status in statusLead()
+        && novo.get('contato_valido', '') in ['', 'Sim', 'Não']
+        && contadorCerto(velho.status, novo.status)
+        && request.resource.data.liberada == (request.resource.data.travando == 0)
+        && situacaoDoRep();
+    }
+
+    match /pedidos/{id} {
+      allow read: if ehTime() || usaUnidade(resource.data.sigla);
+
+      allow create: if (ehTime() || usaUnidade(request.resource.data.sigla))
+        && request.resource.data.keys().hasOnly(['sigla', 'regiao', 'cidade_uf', 'solicitante', 'solicitante_nome', 'segmentos', 'cidades', 'empresas',
+             'situacao', 'previsao', 'responsavel', 'observacao_time', 'leads', 'liberada', 'travando', 'alterado', 'criada_em', 'enviada_em', 'concluida_em'])
+        && request.resource.data.solicitante == request.auth.uid
+        && request.resource.data.situacao == 'Nova'
+        && request.resource.data.segmentos is list && request.resource.data.segmentos.size() >= 1 && request.resource.data.segmentos.size() <= 3
+        && request.resource.data.cidades is list && request.resource.data.cidades.size() <= 3
+        && textoOuNulo(request.resource.data.empresas, 3000)
+        && request.resource.data.previsao is string && request.resource.data.previsao.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.leads == {} && request.resource.data.liberada == false
+        && request.resource.data.travando == 0 && request.resource.data.alterado == null
+        && request.resource.data.criada_em == request.time
+        // o pedido só nasce junto com a troca do "pedido atual" da unidade (é isso que aplica o bloqueio)
+        && getAfter(/databases/$(database)/documents/unidades/$(request.resource.data.sigla)).data.pedidoAtual == id;
+
+      allow update: if
+        // o time importa leads, muda situação, previsão, responsável e observação
+        (ehTime()
+          && request.resource.data.sigla == resource.data.sigla
+          && request.resource.data.leads is map
+          && request.resource.data.leads.keys().hasOnly(chavesLead())
+          && request.resource.data.travando is int
+          && request.resource.data.liberada == (request.resource.data.travando == 0 && request.resource.data.leads.size() > 0))
+        // o representante só mexe em um lead por vez, nos campos dele
+        || (usaUnidade(resource.data.sigla) && repAtualizouUmLead());
+
+      allow delete: if ehTime();
+
+      // ---------- histórico de cada lead ----------
+      match /historico/{hid} {
+        function pedidoPai() { return get(/databases/$(database)/documents/pedidos/$(id)).data; }
+        function podeVer() { return ehTime() || usaUnidade(pedidoPai().sigla); }
+
+        allow read: if podeVer();
+        allow create: if podeVer()
+          && request.resource.data.keys().hasOnly(['lead', 'tipo', 'texto', 'autor', 'autor_nome', 'criado_em', 'editado_em'])
+          && (request.resource.data.lead in chavesLead() || request.resource.data.lead == '')
+          && request.resource.data.tipo in tiposHistorico()
+          && texto(request.resource.data.texto, 2000) && request.resource.data.texto.size() > 0
+          && request.resource.data.autor == request.auth.uid
+          && request.resource.data.autor_nome == perfil().nome
+          && request.resource.data.criado_em == request.time
+          && request.resource.data.editado_em == null;
+        // Registros automáticos ficam travados. Observação: só quem escreveu, só no mesmo dia.
+        allow update: if aprovado() && resource.data.tipo == 'observacao' && resource.data.autor == request.auth.uid
+          && mesmoDia(resource.data.criado_em)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['texto', 'editado_em'])
+          && texto(request.resource.data.texto, 2000) && request.resource.data.texto.size() > 0
+          && request.resource.data.editado_em == request.time;
+        allow delete: if aprovado() && resource.data.tipo == 'observacao' && resource.data.autor == request.auth.uid
+          && mesmoDia(resource.data.criado_em);
+      }
+    }
+
+    // Qualquer outro caminho fica fechado.
+    match /{caminho=**} {
+      allow read, write: if false;
+    }
+  }
+}

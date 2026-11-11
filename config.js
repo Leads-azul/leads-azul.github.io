@@ -1,19 +1,24 @@
 // =====================================================================
 // Configuração do Portal de Leads
-// Depois de criar o projeto no Supabase, cole aqui o endereço do projeto
-// e a chave pública (Project Settings > API Keys). A chave pública foi
-// feita para ficar no site; a segurança dos dados está nas regras do banco.
-// Com os dois campos vazios, o site abre em modo demonstração.
+// "firebase": dados do app web do projeto no Firebase (Configurações do projeto > Seus apps).
+// A apiKey do Firebase foi feita para ficar no site; a segurança dos dados está nas regras
+// do Firestore (arquivo firebase/firestore.rules).
+// Sem o bloco "firebase", o site abre em modo demonstração.
 // =====================================================================
 window.PORTAL_CONFIG = {
-  supabaseUrl: "https://jgdwdkmqylrqboqinmxt.supabase.co",          // ex.: "https://abcdefghijk.supabase.co"
-  supabaseKey: "sb_publishable_9HbMMrtPPfwfDW2LE-ud2g_vN5rlEr6",          // chave "publishable" ou "anon public"
+  firebase: {
+    apiKey: "AIzaSyCNeK3UZ_XxurVv7f6YlFYO8jMF0XUKBBM",
+    authDomain: "portal-leads-azul.firebaseapp.com",
+    projectId: "portal-leads-azul",
+    storageBucket: "portal-leads-azul.firebasestorage.app",
+    messagingSenderId: "81848107209",
+    appId: "1:81848107209:web:18b940fd89017cfc1f8d18"
+  },
 
   nomeDoPortal: "Portal de Leads",
   nomeDoTime: "Inside Sales",
   empresa: "Azul Logística",
-  logoUrl: "",              // ex.: "img/logo-azul-logistica.png" (deixe vazio enquanto não houver o arquivo aprovado)
-  dominiosPermitidos: ["voeazul.com.br", "azulcargo.com.br"], // o banco também confere isso
-  prazoRetornoDias: 7,                    // lead sem retorno há mais dias que isso fica em alerta
-  confirmacaoEmail: false                 // true só depois de ligar "Confirm email" e configurar o remetente (SMTP) no Supabase
+  logoUrl: "img/logo-azul-logistica.png", // logo branco, usado no fundo azul (entrada e menu)
+  dominiosPermitidos: ["voeazul.com.br", "azulcargo.com.br"], // as regras do Firestore também conferem isso
+  prazoRetornoDias: 7                     // lead parado em Novo ou Prospecção há mais dias que isso fica em alerta
 };
