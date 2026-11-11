@@ -17,7 +17,6 @@ service cloud.firestore {
     // ---------- quem é quem ----------
     function logado() { return request.auth != null; }
     function emailToken() { return request.auth.token.email.lower(); }
-    function verificado() { return logado() && request.auth.token.email_verified == true; }
     function dominioOk() { return emailToken().matches('^[a-z0-9._%+-]+@(voeazul|azulcargo)[.]com[.]br$'); }
     // Sigla no começo do e-mail: qoc04.fernanda@voeazul.com.br -> QOC04
     function siglaDoEmail() { return emailToken().split('@')[0].split('[.]')[0].upper(); }
@@ -26,7 +25,8 @@ service cloud.firestore {
 
     function caminhoPerfil() { return /databases/$(database)/documents/perfis/$(request.auth.uid); }
     function perfil() { return get(caminhoPerfil()).data; }
-    function aprovado() { return verificado() && exists(caminhoPerfil()) && perfil().situacao == 'aprovado'; }
+    // Sem confirmação de e-mail (o e-mail da Azul barra o remetente do Firebase): quem garante a pessoa é a aprovação do time.
+    function aprovado() { return logado() && exists(caminhoPerfil()) && perfil().situacao == 'aprovado'; }
     function ehTime() { return aprovado() && perfil().papel == 'time'; }
 
     function caminhoAcesso(sigla) { return /databases/$(database)/documents/acessos/$(request.auth.uid + '_' + sigla); }
