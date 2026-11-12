@@ -68,8 +68,51 @@
     return d.length >= 10 ? d : "";
   }
 
+  // Um telefone da Leads2b -> { n: só números, t: "cel" | "fixo" | "0800" }, ou null se estiver incompleto.
+  function normalizarTelefone(v) {
+    let d = String(v || "").replace(/\D/g, "");
+    if (d.startsWith("00")) d = d.slice(2);
+    if (d.startsWith("55") && d.length >= 12) d = d.slice(2);
+    if (/^0?800\d{7}$/.test(d)) return { n: "0800" + d.slice(-7), t: "0800" };
+    d = d.replace(/^0+/, "");
+    if (!/^[1-9][1-9]/.test(d)) return null;
+    if (d.length === 11 && d[2] === "9") return { n: d, t: "cel" };
+    if (d.length === 10 && /[2-5]/.test(d[2])) return { n: d, t: "fixo" };
+    return null;
+  }
+  // Uma célula com vários telefones ("+55 11 3188 7000, +55 11 97789 0051, ...") -> lista sem repetidos.
+  function lerTelefones(v) {
+    const vistos = new Set(), saida = [];
+    let descartados = 0;
+    String(v || "").split(/[,;\/|\n]| ou /i).map(x => x.trim()).filter(Boolean).forEach(x => {
+      const t = normalizarTelefone(x);
+      if (!t || vistos.has(t.n)) { descartados++; return; }
+      vistos.add(t.n); saida.push(t);
+    });
+    return { lista: saida, descartados };
+  }
+  function lerEmails(v) {
+    const vistos = new Set();
+    return (String(v || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []).map(x => x.toLowerCase()).filter(x => !vistos.has(x) && vistos.add(x));
+  }
+  // Campos extras que vêm da Leads2b. Só o que está aqui é gravado no lead.
+  const LISTA_EXTRA = ["emails", "cnaes", "socios"];
+  const TEXTO_EXTRA = ["fantasia", "site", "linkedin", "instagram", "endereco", "bairro", "cep", "porte", "funcionarios", "faturamento", "tipo_unidade", "filiais"];
+  function extrasDoLead(l) {
+    const x = {};
+    TEXTO_EXTRA.forEach(k => { if (l[k]) x[k] = String(l[k]).slice(0, 300); });
+    LISTA_EXTRA.forEach(k => { if (Array.isArray(l[k]) && l[k].length) x[k] = l[k].slice(0, 60).map(v => String(v).slice(0, 200)); });
+    if (Array.isArray(l.telefones) && l.telefones.length) x.telefones = l.telefones.slice(0, 80).map(t => ({ n: String(t.n).slice(0, 15), t: t.t }));
+    return x;
+  }
+
   // O que vai para o histórico quando um lead muda (status, motivo, contato válido, próximo contato, tentativa).
   const dataBR = (v) => v ? String(v).slice(0, 10).split("-").reverse().join("/") : "";
+  function foneTexto(d) {
+    d = String(d || "");
+    if (d.startsWith("0800")) return `0800 ${d.slice(4, 7)} ${d.slice(7)}`;
+    return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : d.length === 10 ? `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}` : d;
+  }
   function motivoTexto(l) { return l.motivo === "Outro motivo" ? (l.motivo_outro || "Outro motivo") : (l.motivo || ""); }
   function eventosDoLead(antes, depois, dados, tentativa) {
     const ev = [];
@@ -80,6 +123,11 @@
     else if (depois.status === "Sem interesse" && (depois.motivo !== antes.motivo || depois.motivo_outro !== antes.motivo_outro || depois.tentar_em !== antes.tentar_em) && depois.motivo)
       ev.push(["status", `Sem interesse${extraMotivo}`]);
     if (dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) ev.push(["contato_valido", `Tem contato válido? ${dados.contato_valido}`]);
+    if (dados.tel_errados) {
+      const velhos = new Set(antes.tel_errados || []), novos = new Set(dados.tel_errados);
+      dados.tel_errados.filter(n => !velhos.has(n)).forEach(n => ev.push(["telefone", `Número errado: ${foneTexto(n)}`]));
+      [...velhos].filter(n => !novos.has(n)).forEach(n => ev.push(["telefone", `Número voltou para a lista: ${foneTexto(n)}`]));
+    }
     if (depois.retorno && (depois.retorno !== antes.retorno || depois.retorno_hora !== antes.retorno_hora || depois.lembrete !== antes.lembrete))
       ev.push(["agenda", `Próximo contato: ${dataBR(depois.retorno)}${depois.retorno_hora ? " às " + depois.retorno_hora : ""}${depois.lembrete ? " · " + depois.lembrete : ""}`]);
     return ev;
@@ -127,7 +175,7 @@
 
     const api = {
       demo: false,
-      traduzir, proximaSexta, limparEmail, limparTelefone, siglaDoEmail,
+      traduzir, proximaSexta, limparEmail, limparTelefone, siglaDoEmail, normalizarTelefone, lerTelefones, lerEmails, foneTexto,
 
       async sessao() {
         const u = await esperarAuth();
@@ -159,13 +207,15 @@
         await lote.commit();
         return { confirmar: false };
       },
-      // Time: exclui a pessoa e os acessos dela. Pedidos, leads e histórico continuam salvos.
+      // Administrador: tira a pessoa do portal (vai para a aba Excluídos) e fecha os acessos dela. Pedidos, leads e histórico continuam salvos.
       async excluirCadastro(uid) {
         const lote = db.batch();
-        (await db.collection("acessos").where("uid", "==", uid).get()).docs.forEach(d => lote.delete(d.ref));
-        lote.delete(db.doc("perfis/" + uid));
+        (await db.collection("acessos").where("uid", "==", uid).get()).docs.forEach(d => lote.update(d.ref, { situacao: "recusado" }));
+        lote.update(db.doc("perfis/" + uid), { situacao: "excluido", excluido_em: TS(), excluido_por: cacheNome });
         await lote.commit();
       },
+      // Volta para Aguardando; ao aprovar, a unidade principal é liberada de novo.
+      async reativarCadastro(uid) { await db.doc("perfis/" + uid).update({ situacao: "pendente" }); },
       async reenviarConfirmacao() { if (auth.currentUser) await auth.currentUser.sendEmailVerification(continuar()); },
       // Depois do clique no link: atualiza o login e marca o perfil como confirmado.
       async conferirConfirmacao() {
@@ -262,7 +312,7 @@
             const k = livres[i];
             leads[k] = { empresa: l.empresa, cnpj: l.cnpj || null, segmento: l.segmento || null, cidade_uf: l.cidade_uf || null, contato: l.contato || null,
               telefone: limparTelefone(l.telefone) || null, email: limparEmail(l.email) || null, status: "Novo", data_contato: null, contato_valido: "",
-              atualizado_em: new Date().toISOString() };
+              atualizado_em: new Date().toISOString(), ...extrasDoLead(l) };
             novas.push(k);
           });
           t.update(ref, { leads, liberada: liberadaDe(leads), travando: travandoDe(leads), ...(extra || {}), ...(extra && extra.enviada_em === true ? { enviada_em: TS() } : {}) });
@@ -326,10 +376,11 @@
   function criarDemo() {
     const agora = Date.now(), dia = 86400000;
     const iso = (d) => new Date(d).toISOString();
-    const hojeMenos = (n) => new Date(agora - n * dia).toISOString().slice(0, 10);
+    const hojeMenos = (n) => { const d = new Date(agora - n * dia); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); }; // data local
     const db = {
       perfis: [
-        { id: "t1", nome: "Time Inside Sales", email: "inside.sales@voeazul.com.br", celular: "11900000000", cargo: "Inside Sales", papel: "time", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "", criadoEm: iso(agora - 40 * dia) },
+        { id: "t1", nome: "Time Inside Sales", email: "inside.sales@voeazul.com.br", celular: "11900000000", cargo: "Inside Sales", papel: "admin", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "", criadoEm: iso(agora - 40 * dia) },
+        { id: "t2", nome: "Van Exemplo", email: "inside.van@voeazul.com.br", celular: "11900000009", cargo: "Inside Sales", papel: "time", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "", criadoEm: iso(agora - 20 * dia) },
         { id: "r1", nome: "Marina Exemplo", email: "cpq.marina@voeazul.com.br", celular: "19900000001", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "CPQ", criadoEm: iso(agora - 30 * dia) },
         { id: "r2", nome: "Paulo Modelo", email: "cwb.paulo@voeazul.com.br", celular: "41900000002", cargo: "Representante", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "CWB", criadoEm: iso(agora - 25 * dia) },
         { id: "r3", nome: "Ana Teste", email: "rec.ana@voeazul.com.br", celular: "81900000003", papel: "representante", situacao: "pendente", emailVerificado: true, siglaPrincipal: "REC", criadoEm: iso(agora - 1 * dia) }
@@ -359,6 +410,12 @@
         tentativas: [2, 2, 3, 3, 0, 0, 1, 0][i], ultima_tentativa: [2, 2, 3, 3, 0, 0, 1, 0][i] ? iso(agora - (2 + i) * dia) : null };
     });
     // Exemplos das novidades: próximo contato, motivo de perda e qualificação.
+    Object.assign(leadsCpq.l0, { fantasia: "Vale Verde Tecidos", telefone: "19900001000",
+      telefones: [{ n: "19900001000", t: "cel" }, { n: "19990001001", t: "cel" }, { n: "19990001002", t: "cel" }, { n: "1932510000", t: "fixo" }, { n: "1932510011", t: "fixo" }, { n: "4136000002", t: "fixo" }, { n: "08006660000", t: "0800" }],
+      emails: ["contato0@exemplo.com.br", "compras@exemplo.com.br", "financeiro@exemplo.com.br", "vendas@exemplo.com.br"],
+      site: "exemplo.com.br", linkedin: "linkedin.com/company/exemplo", instagram: "instagram.com/exemplo",
+      endereco: "Rua Exemplo, 100 - Centro", bairro: "Centro", cep: "13015000", porte: "DEMAIS", funcionarios: "51-200", faturamento: "10M-30M", tipo_unidade: "MATRIZ", filiais: "3",
+      cnaes: ["1351100", "4641901"], socios: ["Sócia Fictícia", "Sócio Fictício"] });
     Object.assign(leadsCpq.l0, { retorno: hojeMenos(0), retorno_hora: "10:00", lembrete: "Retornar com a cotação para Vinhedo.", volume: "~20 envios/mês", destinos: "Interior de SP e Sul de MG", transportadora: "Correios" });
     Object.assign(leadsCpq.l1, { motivo: "Sem volume agora", tentar_em: hojeMenos(0), lembrete: "" });
     Object.assign(leadsCpq.l3, { retorno: hojeMenos(1), retorno_hora: "14:00", lembrete: "Ligar depois das 14h, ela decide as compras." });
@@ -378,7 +435,8 @@
     const copia = (x) => JSON.parse(JSON.stringify(x));
     const espera = () => new Promise(r => setTimeout(r, 120));
     const eu = () => usuario && db.perfis.find(p => p.id === usuario.id);
-    const ehTime = () => eu() && eu().papel === "time" && eu().situacao === "aprovado";
+    const ehTime = () => eu() && ["time", "admin"].includes(eu().papel) && eu().situacao === "aprovado";
+    const ehAdmin = () => ehTime() && eu().papel === "admin";
     const usa = (sigla) => ehTime() || db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla && a.situacao === "aprovado");
     const negar = () => { const e = new Error("Você não tem permissão para esta ação."); e.code = "permission-denied"; throw e; };
     const pedidoLiberado = (id) => { const p = db.pedidos.find(x => x.id === id); return !p || ["Concluída", "Sem leads", "Cancelada"].includes(p.situacao) || (p.situacao === "Enviada" && p.liberada); };
@@ -387,7 +445,7 @@
 
     return {
       demo: true,
-      traduzir, proximaSexta, limparEmail, limparTelefone, siglaDoEmail,
+      traduzir, proximaSexta, limparEmail, limparTelefone, siglaDoEmail, normalizarTelefone, lerTelefones, lerEmails, foneTexto,
       async sessao() { return usuario ? { ...usuario, verificado: !!(eu() && eu().emailVerificado) } : null; },
       async entrar(email) {
         await espera();
@@ -432,10 +490,11 @@
       async perfis() { if (!ehTime()) negar(); return copia(db.perfis); },
       async acessos() { if (!ehTime()) negar(); return copia(db.acessos); },
       async unidades() { return copia(db.unidades); },
-      async atualizarPerfil(id, dados) { if (!ehTime()) negar(); Object.assign(db.perfis.find(p => p.id === id), dados); },
-      async atualizarAcesso(id, situacao) { if (!ehTime()) negar(); db.acessos.find(a => a.id === id).situacao = situacao; },
-      async excluirCadastro(id) { if (!ehTime() || id === usuario.id) negar(); db.perfis = db.perfis.filter(p => p.id !== id); db.acessos = db.acessos.filter(a => a.uid !== id); },
-      async aprovarCadastro(id) { if (!ehTime()) negar(); db.perfis.find(p => p.id === id).situacao = "aprovado"; db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
+      async atualizarPerfil(id, dados) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), dados); },
+      async atualizarAcesso(id, situacao) { if (!ehAdmin()) negar(); db.acessos.find(a => a.id === id).situacao = situacao; },
+      async excluirCadastro(id) { if (!ehAdmin() || id === usuario.id) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "excluido", excluido_em: new Date().toISOString(), excluido_por: eu().nome }); db.acessos.filter(a => a.uid === id).forEach(a => a.situacao = "recusado"); },
+      async reativarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "pendente"; },
+      async aprovarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "aprovado"; db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
       async enviarRedefinicao() { if (!ehTime()) negar(); await espera(); },
       async pedidos(siglas) {
         const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : ehTime());
@@ -469,14 +528,14 @@
         linhas.forEach((l, i) => {
           const k = livres[i];
           p.leads[k] = { empresa: l.empresa, cnpj: l.cnpj || null, segmento: l.segmento || null, cidade_uf: l.cidade_uf || null, contato: l.contato || null,
-            telefone: limparTelefone(l.telefone) || null, email: limparEmail(l.email) || null, status: "Novo", data_contato: null, contato_valido: "", atualizado_em: new Date().toISOString() };
+            telefone: limparTelefone(l.telefone) || null, email: limparEmail(l.email) || null, status: "Novo", data_contato: null, contato_valido: "", atualizado_em: new Date().toISOString(), ...extrasDoLead(l) };
           reg(pedidoId, k, "recebido", `Lead recebido no pedido ${pedidoId}`);
         });
         p.liberada = liberadaDe(p.leads); p.travando = travandoDe(p.leads);
         const d = { ...(extra || {}) }; if (d.enviada_em === true) d.enviada_em = new Date().toISOString();
         Object.assign(p, d);
       },
-      async apagarLeadsDoPedido(pedidoId) { if (!ehTime()) negar(); const p = db.pedidos.find(x => x.id === pedidoId); p.leads = {}; p.liberada = false; },
+      async apagarLeadsDoPedido(pedidoId) { if (!ehAdmin()) negar(); const p = db.pedidos.find(x => x.id === pedidoId); p.leads = {}; p.liberada = false; },
       async atualizarLead(id, dados, tentativa) {
         await espera();
         const [pid, k] = separarId(id);

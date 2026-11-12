@@ -34,7 +34,10 @@
   const dias = (v) => v ? Math.floor((Date.now() - new Date(v).getTime()) / DIA) : 0;
   const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
   const urlPortal = () => location.origin + location.pathname;
-  const ehTime = () => E.perfil && E.perfil.papel === "time";
+  // Time de Inside Sales trabalha pedidos e leads; administrador também aprova cadastros, muda acessos e apaga.
+  const ehTime = () => E.perfil && ["time", "admin"].includes(E.perfil.papel);
+  const ehAdmin = () => E.perfil && E.perfil.papel === "admin";
+  const PAPEL = { admin: "Administrador", time: "Time", representante: "Representante" };
   const trava = (l) => TRAVA.has(l.status);
   const final = (l) => !trava(l);
   // Lead com próximo contato marcado (hoje ou depois) não conta como parado.
@@ -61,6 +64,59 @@
   function foneBonito(num) {
     const d = API.limparTelefone(num); if (!d) return String(num || "");
     return d.length === 11 ? `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}` : `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  }
+
+  // ---- Contatos completos (Leads2b): telefones, e-mails, redes, endereço ----
+  const foneTxt = (n) => API.foneTexto(API.normalizarTelefone(n) ? API.normalizarTelefone(n).n : n);
+  const listaCel = (v) => String(v || "").split(/[,;\n]/).map(x => x.trim()).filter(Boolean);
+  const MINUSCULAS = new Set(["de", "da", "do", "das", "dos", "e", "em", "a", "o"]);
+  const SIGLAS = new Set(["ltda", "me", "epp", "eireli", "s/a", "sa", "s.a.", "ss", "cia", "ltda.", "s/s"]);
+  // "COMPACTA PRINT LIMITADA" -> "Compacta Print Limitada". Só mexe em texto todo em maiúsculas.
+  function titulo(v) {
+    v = String(v || "").trim();
+    if (!v || v !== v.toUpperCase()) return v;
+    return v.toLowerCase().split(/(\s+)/).map((p, i) => SIGLAS.has(p) ? p.toUpperCase() : (i && MINUSCULAS.has(p)) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join("");
+  }
+  const cnpjBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : String(v || "").trim(); };
+  const cepBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 8 ? `${d.slice(0, 5)}-${d.slice(5)}` : d; };
+  const cnaeBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 7 ? `${d.slice(0, 4)}-${d[4]}/${d.slice(5)}` : d; };
+  const limparLink = (v) => { const u = String(v || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, ""); return u || null; };
+  const linkDe = (v) => v ? "https://" + String(v).replace(/^https?:\/\//i, "") : "";
+  // DDD mais comum entre os telefones = a cidade da empresa (os outros costumam ser filiais).
+  function dddBase(tels) {
+    const c = {};
+    tels.filter(t => t.t !== "0800").forEach(t => { const d = t.n.slice(0, 2); c[d] = (c[d] || 0) + 1; });
+    return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || "";
+  }
+  const ordemTel = (t, base) => (t.errado ? 10 : 0) + (t.t === "cel" ? (t.n.startsWith(base) ? 0 : 1) : t.t === "fixo" ? (t.n.startsWith(base) ? 2 : 3) : 4);
+  // Lista de telefones do lead (leads antigos só têm "telefone"), na ordem do mais provável para o menos provável.
+  function telefonesDe(l) {
+    let ts = Array.isArray(l.telefones) && l.telefones.length ? l.telefones : [API.normalizarTelefone(l.telefone)].filter(Boolean);
+    if (!ts.length && API.limparTelefone(l.telefone)) ts = [{ n: API.limparTelefone(l.telefone), t: "fixo" }];
+    const err = new Set(l.tel_errados || []), base = dddBase(ts);
+    return ts.map(t => ({ ...t, errado: err.has(t.n), local: t.t !== "0800" && t.n.startsWith(base), base })).sort((a, b) => ordemTel(a, base) - ordemTel(b, base));
+  }
+  const emailsDe = (l) => Array.isArray(l.emails) && l.emails.length ? l.emails : [API.limparEmail(l.email)].filter(Boolean);
+  const DDD_UF = { 11: "SP", 12: "SP", 13: "SP", 14: "SP", 15: "SP", 16: "SP", 17: "SP", 18: "SP", 19: "SP", 21: "RJ", 22: "RJ", 24: "RJ", 27: "ES", 28: "ES",
+    31: "MG", 32: "MG", 33: "MG", 34: "MG", 35: "MG", 37: "MG", 38: "MG", 41: "PR", 42: "PR", 43: "PR", 44: "PR", 45: "PR", 46: "PR", 47: "SC", 48: "SC", 49: "SC",
+    51: "RS", 53: "RS", 54: "RS", 55: "RS", 61: "DF", 62: "GO", 63: "TO", 64: "GO", 65: "MT", 66: "MT", 67: "MS", 68: "AC", 69: "RO", 71: "BA", 73: "BA", 74: "BA", 75: "BA", 77: "BA",
+    79: "SE", 81: "PE", 82: "AL", 83: "PB", 84: "RN", 85: "CE", 86: "PI", 87: "PE", 88: "CE", 89: "PI", 91: "PA", 92: "AM", 93: "PA", 94: "PA", 95: "RR", 96: "AP", 97: "AM", 98: "MA", 99: "MA" };
+  function porteTexto(l) {
+    const UN = { M: " mi", K: " mil", B: " bi", "": "" };
+    // "10M-30M" -> "10 a 30 mi"; "51-200" -> "51 a 200"
+    const faixa = (v) => {
+      const m = String(v).trim().match(/^(\d+(?:[.,]\d+)?)\s*([MKB]?)\s*-\s*(\d+(?:[.,]\d+)?)\s*([MKB]?)$/i);
+      if (!m) return String(v).replace(/(\d)\s*([MKB])\b/gi, (x, d, u) => d + UN[u.toUpperCase()]).replace(/\+$/, " ou mais");
+      const u1 = m[2].toUpperCase(), u2 = m[4].toUpperCase();
+      return `${m[1]}${u1 !== u2 ? UN[u1] : ""} a ${m[3]}${UN[u2]}`;
+    };
+    const nf = Number(l.filiais) || 0;
+    return [
+      l.funcionarios && String(l.funcionarios).trim() !== "0" && (String(l.funcionarios).trim() === "1" ? "1 funcionário" : `${faixa(l.funcionarios)} funcionários`),
+      l.faturamento && `faturamento presumido R$ ${faixa(l.faturamento)}`,
+      ({ ME: "Microempresa", EPP: "Empresa de pequeno porte" })[String(l.porte || "").toUpperCase()],
+      l.tipo_unidade && `${titulo(l.tipo_unidade)}${nf ? ` com ${nf} filia${nf > 1 ? "is" : "l"}` : ""}`
+    ].filter(Boolean).join(" · ");
   }
 
   let toastTimer;
@@ -205,7 +261,8 @@
       <div class="demo-atalhos">
         <p>Para conhecer o portal sem cadastro:</p>
         <button class="btn" data-demo="r1">Ver como representante (unidades CPQ e VCP)</button>
-        <button class="btn" data-demo="t1">Ver como time de Inside Sales</button>
+        <button class="btn" data-demo="t1">Ver como administrador</button>
+        <button class="btn" data-demo="t2">Ver como time de Inside Sales</button>
       </div>` : "";
 
     $app.innerHTML = `
@@ -342,7 +399,7 @@
 
   function telaEspera() {
     const p = E.perfil;
-    const recusado = p.situacao === "recusado";
+    const recusado = ["recusado", "excluido"].includes(p.situacao);
     const unid = (p.unidades || []).map(u => u.nome ? "da sua carteira" : "da unidade " + u.sigla).join(", ");
     $app.innerHTML = `
       <div class="carregando"><div class="vazio" style="max-width:520px">
@@ -367,7 +424,7 @@
   // ------------------------------------------------------------------
   function desenhar() {
     const time = ehTime();
-    const pendentes = E.perfis.filter(p => p.situacao === "pendente").length + E.acessos.filter(a => a.situacao === "pendente" && !a.principal).length;
+    const pendentes = ehAdmin() ? E.perfis.filter(p => p.situacao === "pendente").length + E.acessos.filter(a => a.situacao === "pendente" && !a.principal && perfilDe(a.uid).situacao === "aprovado").length : 0;
     const novos = E.pedidos.filter(p => p.situacao === "Nova").length;
     const itens = time
       ? [["pedidos", "Pedidos", novos], ["leads", "Leads"], ["cadastros", "Cadastros", pendentes], ["painel", "Painel"], ["conta", "Minha conta"]]
@@ -390,7 +447,7 @@
             ${itens.map(([id, nome, c]) => `<button data-tela="${id}"${E.tela === id ? ' aria-current="page"' : ""}><span>${nome}</span>${c ? `<span class="contador">${c}</span>` : ""}</button>`).join("")}
           </nav>
           <div class="quem">
-            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? "Time de " + esc(TIME) : `${E.perfil.cargo === "Executivo" ? "Executivo · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
+            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? (ehAdmin() ? "Administrador · " : "Time de ") + esc(TIME) : `${E.perfil.cargo === "Executivo" ? "Executivo · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
@@ -449,8 +506,12 @@
     irLeads: () => { E.tela = "leads"; desenhar(); },
     aprovar: (b) => mudar(() => API.aprovarCadastro(b.dataset.id), "Cadastro aprovado."),
     recusar: (b) => mudar(() => API.atualizarPerfil(b.dataset.id, { situacao: "recusado" }), "Cadastro recusado."),
-    tornarTime: (b) => { if (confirm("Dar acesso de time a esta pessoa? Ela passa a ver e alterar tudo.")) mudar(() => API.atualizarPerfil(b.dataset.id, { papel: "time" }), "Acesso de time liberado."); },
-    tornarRep: (b) => mudar(() => API.atualizarPerfil(b.dataset.id, { papel: "representante" }), "Acesso alterado para representante."),
+    papel: (b) => {
+      const x = b.dataset.papel;
+      const aviso1 = { admin: "Tornar administrador? A pessoa passa a aprovar cadastros, mudar acessos e excluir.", time: "Dar acesso de time? A pessoa passa a ver e trabalhar todos os pedidos e leads, sem gerenciar cadastros.", representante: "Voltar para representante? A pessoa passa a ver só as próprias unidades." }[x];
+      if (confirm(aviso1)) mudar(() => API.atualizarPerfil(b.dataset.id, { papel: x }), `Acesso alterado para ${PAPEL[x].toLowerCase()}.`);
+    },
+    reativar: (b) => mudar(() => API.reativarCadastro(b.dataset.id), "Cadastro reativado. Ele está em Aguardando para aprovar."),
     aprovarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "aprovado"), "Unidade liberada."),
     recusarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "recusado"), "Unidade recusada."),
     senha: (b) => janelaSenha(b.dataset.id),
@@ -474,7 +535,8 @@
         if (E.f.loja && l.sigla !== E.f.loja) return false;
         if (E.f.regiao && pedidoDe(l).regiao !== E.f.regiao) return false;
       }
-      if (b && !norm([l.empresa, l.cnpj, l.contato, l.telefone, l.email, l.cidade_uf, l.sigla].join(" ")).includes(b)) return false;
+      if (b && !norm([l.empresa, l.fantasia, l.cnpj, l.contato, l.telefone, l.email, l.cidade_uf, l.sigla, (l.telefones || []).map(t => t.n).join(" "), (l.emails || []).join(" "), (l.socios || []).join(" ")].join(" ")).includes(b)
+        && !(soDigitos(b).length >= 4 && soDigitos([l.cnpj, l.telefone, (l.telefones || []).map(t => t.n).join(" ")].join(" ")).includes(soDigitos(b)))) return false;
       return true;
     });
   }
@@ -612,8 +674,66 @@
     return modelo.replace(/\{contato\}/g, contato).replace(/\{empresa\}/g, l.empresa || "").replace(/\{nome\}/g, primeiroNome(E.perfil.nome))
       .replace(/\{sigla\}/g, l.sigla || "").replace(/\{cidade\}/g, u.cidade_uf || l.cidade_uf || "").replace(/\{celular\}/g, foneBonito(E.perfil.celular));
   }
-  const ROTULO_HIST = { recebido: "⬇", status: "↻", contato_valido: "✓", whatsapp: "✆", email: "✉", ligacao: "☎", observacao: "✎", agenda: "◷" };
+  const ROTULO_HIST = { recebido: "⬇", status: "↻", contato_valido: "✓", whatsapp: "✆", email: "✉", ligacao: "☎", observacao: "✎", agenda: "◷", telefone: "⊘" };
   let desligarFicha = null; // tira os eventos da ficha anterior (volta para o portal, foco)
+
+  // Ficha com tudo o que veio da Leads2b: empresa, internet, telefones, e-mails e sócios.
+  function linhaTel(t, todos) {
+    const tipo = { cel: "Celular", fixo: "Fixo", "0800": "0800" }[t.t] || "";
+    const extra = todos && t.t !== "0800" && !t.local && t.base ? `<span class="sub">DDD ${esc(t.n.slice(0, 2))}${DDD_UF[t.n.slice(0, 2)] ? " · " + DDD_UF[t.n.slice(0, 2)] : ""}</span>` : todos && t.t === "0800" ? `<span class="sub">Costuma ser o SAC</span>` : "";
+    if (t.errado) return `<div class="ct-linha errado"><span class="tipo t-${t.t}">${tipo}</span><b>${esc(foneTxt(t.n))}</b><span class="sub">Número errado</span>
+      <span class="ct-acoes"><button type="button" class="link-mini" data-tel-errado="${esc(t.n)}">Desfazer</button></span></div>`;
+    return `<div class="ct-linha"><span class="tipo t-${t.t}">${tipo}</span><b>${esc(foneTxt(t.n))}</b>${extra}
+      <span class="ct-acoes">${t.t === "cel" ? `<button type="button" class="btn btn-p btn-zap btn-mini" data-tel-zap="${esc(t.n)}">WhatsApp</button>` : ""}<button type="button" class="btn btn-p btn-mini" data-tel-ligar="${esc(t.n)}">Ligar</button>
+      ${todos ? `<button type="button" class="link-mini" data-tel-errado="${esc(t.n)}">Número errado</button>` : ""}</span></div>`;
+  }
+  function secaoTelefones(tels, todos) {
+    if (!tels.length) return `<section class="ct" id="l-tels"></section>`;
+    const conta = (t) => tels.filter(x => x.t === t && !x.errado).length;
+    const resumo = [conta("cel") && `${conta("cel")} celular${conta("cel") > 1 ? "es" : ""}`, conta("fixo") && `${conta("fixo")} fixo${conta("fixo") > 1 ? "s" : ""}`, conta("0800") && `${conta("0800")} 0800`, tels.some(t => t.errado) && `${tels.filter(t => t.errado).length} errado(s)`].filter(Boolean).join(" · ");
+    let corpo;
+    if (todos) {
+      const base = tels[0].base;
+      const grupos = [
+        ["Celulares", tels.filter(t => t.t === "cel" && !t.errado)],
+        [`Fixos na cidade da empresa${base ? " · DDD " + base : ""}`, tels.filter(t => t.t === "fixo" && t.local && !t.errado)],
+        ["Outras cidades, prováveis filiais", tels.filter(t => t.t === "fixo" && !t.local && !t.errado)],
+        ["0800", tels.filter(t => t.t === "0800" && !t.errado)],
+        ["Marcados como errados", tels.filter(t => t.errado)]
+      ].filter(([, g]) => g.length);
+      corpo = grupos.map(([nome, g]) => `<p class="ct-grupo">${esc(nome)} (${g.length})</p><div class="ct-lista">${g.map(t => linhaTel(t, true)).join("")}</div>`).join("")
+        + `<p class="sub">“Número errado” risca o telefone para toda a unidade e fica no histórico. <button type="button" class="link-mini" data-tel-menos>Mostrar menos</button></p>`;
+    } else {
+      const visiveis = tels.filter(t => !t.errado).slice(0, 4);
+      corpo = `<div class="ct-lista">${visiveis.map(t => linhaTel(t, false)).join("")}
+        <button type="button" class="ct-mais" data-tel-todos>${tels.length > visiveis.length ? `Ver todos os ${tels.length} telefones` : "Ver por tipo e marcar número errado"}</button></div>`;
+    }
+    return `<section class="ct" id="l-tels"><div class="ct-topo"><h3>Telefones (${tels.length})</h3><span class="sub">${resumo}</span></div>${corpo}</section>`;
+  }
+  function fichaCompleta(l, tels, mails, telTodos) {
+    const cnaes = l.cnaes || [];
+    const endereco = l.endereco ? `${esc(l.endereco)}${l.bairro && !norm(l.endereco).includes(norm(l.bairro)) ? " · " + esc(l.bairro) : ""}<br>` : "";
+    const local = [l.cidade_uf, l.cep && "CEP " + cepBonito(l.cep)].filter(Boolean).join(" · ");
+    const mapa = l.endereco || l.cep ? "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent([l.endereco, l.bairro, l.cidade_uf, cepBonito(l.cep)].filter(Boolean).join(", ")) : "";
+    const links = [[l.site, "Site", l.site], [l.linkedin, "LinkedIn"], [l.instagram, "Instagram", l.instagram && "@" + String(l.instagram).split("/").filter(Boolean).pop()], [mapa, "Ver no mapa"]].filter(([u]) => u);
+    const linhas = [
+      ["CNPJ", l.cnpj && `${esc(l.cnpj)} <button type="button" class="link-mini" data-copiar="${esc(l.cnpj)}">Copiar</button>`],
+      ["Segmento", l.segmento && esc(l.segmento)],
+      ["Atividade", cnaes.length && `CNAE ${esc(cnaeBonito(cnaes[0]))}${cnaes.length > 1 ? ` <span class="sub">+ ${cnaes.length - 1} outro${cnaes.length > 2 ? "s" : ""}</span>` : ""}`],
+      ["Porte", porteTexto(l) && esc(porteTexto(l))],
+      [l.endereco ? "Endereço" : "Cidade/UF", (endereco + esc(local)) || ""],
+      ["Contato", l.contato && esc(l.contato)],
+      ["Sócios", (l.socios || []).length && esc(l.socios.join(", "))]
+    ].filter(([, v]) => v);
+    const emailsHtml = mails.length ? `<section class="ct"><div class="ct-topo"><h3>E-mails (${mails.length})</h3></div><div class="ct-lista">
+        ${mails.map((m, i) => `<div class="ct-linha${i >= 3 ? " ct-escondido" : ""}"><b class="quebra">${esc(m)}</b><span class="ct-acoes"><button type="button" class="btn btn-p btn-mini" data-copiar="${esc(m)}">Copiar</button><button type="button" class="btn btn-p btn-mini" data-mail-usar="${esc(m)}">Mensagem pronta</button></span></div>`).join("")}
+        ${mails.length > 3 ? `<button type="button" class="ct-mais" data-mail-todos>Ver os ${mails.length} e-mails</button>` : ""}</div></section>` : "";
+    return {
+      dados: `<dl class="dados">${linhas.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
+        ${links.length ? `<div class="ct-links">${links.map(([u, nome, txt]) => `<a href="${esc(linkDe(u))}" target="_blank" rel="noopener" class="ct-link">${esc(txt || nome)}</a>`).join("")}</div>` : ""}`,
+      listas: `<div class="ct-listas">${secaoTelefones(tels, telTodos)}${emailsHtml}</div>`
+    };
+  }
 
   function janelaLead(id, op) {
     op = op || {};
@@ -621,8 +741,13 @@
     if (!l) return;
     if (desligarFicha) { desligarFicha(); desligarFicha = null; }
     const p = pedidoDe(l);
-    const email = API.limparEmail(l.email);
-    const tel = API.limparTelefone(l.telefone);
+    const tels = telefonesDe(l), mails = emailsDe(l);
+    const ativos = tels.filter(t => !t.errado);
+    // Número e e-mail usados nos botões. Clicar num telefone ou e-mail da lista troca qual é usado.
+    let tel = (ativos.find(t => t.t === "cel") || ativos[0] || {}).n || "";
+    let email = mails[0] || "";
+    const completo = tels.length > 1 || mails.length > 1 || l.site || l.linkedin || l.instagram || l.endereco || (l.socios || []).length;
+    const ficha = completo ? fichaCompleta(l, tels, mails, !!op.telTodos) : null;
     const n = tentativasDe(l);
     const retomada = n >= 1;
     const statusInicial = op.status || l.status;
@@ -632,12 +757,12 @@
     const prazos = [["Não", ""], ["Em 1 mês", somaDias(30)], ["Em 3 meses", somaDias(90)], ["Em 6 meses", somaDias(180)]];
 
     abrir(`
-      <div class="janela-topo"><div><h2>${esc(l.empresa)}</h2><p>${esc(rotuloLongo(l.sigla))}${p.id ? `, pedido ${esc(p.id)} de ${data(p.criada_em)}` : ""}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-topo"><div><h2>${esc(l.empresa)}</h2><p>${l.fantasia && norm(l.fantasia) !== norm(l.empresa) ? `Nome fantasia: ${esc(l.fantasia)} · ` : ""}${esc(rotuloLongo(l.sigla))}${p.id ? `, pedido ${esc(p.id)} de ${data(p.criada_em)}` : ""}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
-        <dl class="dados">
-          ${[["CNPJ", l.cnpj], ["Segmento", l.segmento], ["Cidade/UF", l.cidade_uf], ["Contato", l.contato], ["Telefone", tel ? foneBonito(tel) : l.telefone], ["E-mail", email || l.email]]
+        ${completo ? ficha.dados : `<dl class="dados">
+          ${[["CNPJ", l.cnpj], ["Segmento", l.segmento], ["Cidade/UF", l.cidade_uf], ["Contato", l.contato], ["Telefone", tel ? foneTxt(tel) : l.telefone], ["E-mail", email || l.email]]
             .filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}
-        </dl>
+        </dl>`}
         ${op.aposTentativa ? `<div class="ok-tentativa">Tentativa ${n} registrada. Marque abaixo o próximo contato.</div>` : ""}
         ${decidir(l) ? `<div class="decidir" id="l-decidir">
             <div class="decidir-topo"><b>${n} tentativas e o lead continua em ${esc(l.status)}</b>${l.ultima_tentativa ? `<span>Última ${haDias(l.ultima_tentativa)}</span>` : ""}</div>
@@ -654,6 +779,7 @@
         </div>
         <div id="l-compor"></div>
         <div class="confirma" id="l-confirma" hidden></div>
+        ${completo ? ficha.listas : ""}
         <details class="dicas"><summary>Dicas de abordagem</summary>
           <dl>${(L.dicas || []).map(([q, r]) => `<dt>${esc(q)}</dt><dd>${esc(r)}</dd>`).join("")}</dl>
         </details>
@@ -810,11 +936,13 @@
         confirma.hidden = false;
         confirma.querySelectorAll("[data-r]").forEach(b => b.addEventListener("click", async () => {
           const ok = b.dataset.r === "sim";
-          const texto = {
+          const qual = canal === "email" ? (mails.length > 1 ? ` · ${email}` : "") : (tels.length > 1 ? ` · ${foneTxt(tel)}` : "");
+          let texto = {
             whatsapp: ok ? (retomada ? "WhatsApp: mensagem de retomada enviada" : "WhatsApp: mensagem enviada") : null,
             email: ok ? (retomada ? "E-mail de retomada enviado" : "E-mail: proposta enviada") : null,
             ligacao: ok ? "Ligação: conseguiu falar" : "Ligação: não atendeu"
           }[canal];
+          if (texto) texto += qual;
           confirma.hidden = true; pendente = null;
           if (!texto) return;
           try {
@@ -837,14 +965,13 @@
       $janela.addEventListener("close", () => { if (desligarFicha) { desligarFicha(); desligarFicha = null; } }, { once: true });
 
       const compor = j.querySelector("#l-compor");
-      j.querySelectorAll("[data-canal]").forEach(b => b.addEventListener("click", () => {
-        const canal = b.dataset.canal;
-        if (canal === "ligacao") { pendente = "ligacao"; location.href = `tel:+55${tel}`; setTimeout(() => perguntar("ligacao"), 1500); return; }
+      const acionar = (canal) => {
+        if (canal === "ligacao") { pendente = "ligacao"; location.href = tel.startsWith("0800") ? `tel:${tel}` : `tel:+55${tel}`; setTimeout(() => perguntar("ligacao"), 1500); return; }
         const M = L.mensagens;
         const assunto = preencher(retomada ? (M.emailRetomadaAssunto || M.emailAssunto) : M.emailAssunto, l);
         const corpo = preencher(canal === "email" ? (retomada ? (M.emailRetomada || M.email) : M.email) : (retomada ? (M.whatsappRetomada || M.whatsapp) : M.whatsapp), l);
         compor.innerHTML = `<div class="msg-prev">
-            <div class="cab">${canal === "email" ? `<b>Para</b>${esc(email)}<br><b>Assunto</b><input id="m-assunto" value="${esc(assunto)}">` : `<b>Para</b>WhatsApp ${esc(foneBonito(tel))}`}</div>
+            <div class="cab">${canal === "email" ? `<b>Para</b>${esc(email)}<br><b>Assunto</b><input id="m-assunto" value="${esc(assunto)}">` : `<b>Para</b>WhatsApp ${esc(foneTxt(tel))}`}</div>
             <textarea id="m-texto" rows="8">${esc(corpo)}</textarea></div>
           <div class="acoes" style="margin:8px 0 16px"><span class="sub" style="flex:1">${retomada ? `Mensagem de retomada (${n + 1}ª tentativa). ` : ""}Você pode ajustar o texto antes de abrir.</span>
             <button class="btn btn-p" id="m-cancelar">Cancelar</button><button class="btn btn-p btn-primario" id="m-abrir">${canal === "email" ? "Abrir no e-mail" : "Abrir no WhatsApp"}</button></div>`;
@@ -858,7 +985,32 @@
           if (canal === "email") location.href = url; else window.open(url, "_blank", "noopener");
           setTimeout(() => { if (pendente) perguntar(canal); }, 1500);
         };
-      }));
+        compor.scrollIntoView({ block: "center", behavior: "smooth" });
+      };
+      j.querySelectorAll("[data-canal]").forEach(b => b.addEventListener("click", () => acionar(b.dataset.canal)));
+
+      // Lista de telefones e e-mails: usar outro número, copiar, ver todos, número errado.
+      j.addEventListener("click", async (ev) => {
+        const b = ev.target.closest("[data-tel-zap],[data-tel-ligar],[data-tel-errado],[data-tel-todos],[data-tel-menos],[data-mail-usar],[data-mail-todos],[data-copiar]");
+        if (!b) return;
+        ev.preventDefault();
+        const d = b.dataset;
+        if (d.telZap) { tel = d.telZap; acionar("whatsapp"); }
+        else if (d.telLigar) { tel = d.telLigar; acionar("ligacao"); }
+        else if (d.mailUsar) { email = d.mailUsar; acionar("email"); }
+        else if (d.copiar) { try { await navigator.clipboard.writeText(d.copiar); aviso("Copiado."); } catch (e) { aviso("Não deu para copiar. Selecione e copie com Ctrl+C.", true); } }
+        else if (d.telTodos !== undefined) { j.querySelector("#l-tels").outerHTML = secaoTelefones(tels, true); }
+        else if (d.telMenos !== undefined) { j.querySelector("#l-tels").outerHTML = secaoTelefones(tels, false); j.querySelector("#l-tels").scrollIntoView({ block: "start", behavior: "smooth" }); }
+        else if (d.mailTodos !== undefined) { j.querySelectorAll(".ct-escondido").forEach(x => x.classList.remove("ct-escondido")); b.remove(); }
+        else if (d.telErrado) {
+          const atual = new Set(l.tel_errados || []);
+          if (atual.has(d.telErrado)) atual.delete(d.telErrado);
+          else if (!confirm(`Marcar ${foneTxt(d.telErrado)} como número errado? Ele fica riscado para toda a unidade.`)) return;
+          else atual.add(d.telErrado);
+          try { await API.atualizarLead(id, { tel_errados: [...atual] }); await carregar(); desenhar(); janelaLead(id, { telTodos: true }); }
+          catch (e) { aviso(API.traduzir(e), true); }
+        }
+      });
 
       j.querySelector("#l-salvar").addEventListener("click", async (ev) => {
         const falha = (msg) => { erro.textContent = msg; erro.hidden = false; erro.scrollIntoView({ block: "center", behavior: "smooth" }); };
@@ -1197,7 +1349,7 @@
         </div>
         <div class="campo"><label for="pt-resp">Responsável</label><input id="pt-resp" type="text" value="${esc(p.responsavel || "")}" placeholder="${esc(E.perfil.nome)}"></div>
         <div class="campo"><label for="pt-obs">Observação para a unidade</label><textarea id="pt-obs" placeholder="Aparece para o representante em Meus pedidos">${esc(p.observacao_time || "")}</textarea></div>
-        ${ls.length ? `<button class="btn btn-p btn-perigo" id="pt-apagar">Apagar os ${ls.length} leads deste pedido</button>` : ""}
+        ${ls.length && ehAdmin() ? `<button class="btn btn-p btn-perigo" id="pt-apagar">Apagar os ${ls.length} leads deste pedido</button>` : ""}
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="pt-salvar">Salvar</button></div>`,
     (j) => {
@@ -1228,20 +1380,36 @@
   // ------------------------------------------------------------------
   // Time: importar a planilha da Leads2b
   // ------------------------------------------------------------------
+  // [campo, rótulo, nomes de coluna aceitos]. Telefones, e-mails, redes, CNAE e sócios podem vir vários numa célula só.
   const CAMPOS = [
-    ["empresa", "Empresa", ["razao social", "empresa", "nome fantasia", "nome da empresa", "nome"]],
+    ["empresa", "Empresa", ["razao social", "empresa", "nome da empresa", "nome"]],
+    ["fantasia", "Nome fantasia", ["nome fantasia da empresa", "nome fantasia", "fantasia"]],
     ["cnpj", "CNPJ", ["cnpj", "cpf/cnpj", "documento"]],
-    ["segmento", "Segmento", ["segmento", "descricao cnae", "atividade", "ramo", "cnae"]],
+    ["segmento", "Segmento", ["segmento", "descricao cnae", "atividade", "ramo"]],
     ["cidade", "Cidade", ["cidade/uf", "cidade", "municipio"]],
     ["uf", "UF", ["uf", "estado"]],
-    ["contato", "Contato", ["contato", "nome do contato", "decisor", "socio", "responsavel"]],
-    ["telefone", "Telefone", ["telefone", "celular", "whatsapp", "fone", "telefone 1"]],
-    ["email", "E-mail", ["e-mail", "email"]]
+    ["contato", "Contato", ["contato", "nome do contato", "decisor", "responsavel"]],
+    ["telefone", "Telefones", ["telefones", "telefone", "celular", "whatsapp", "fone", "telefone 1"]],
+    ["email", "E-mails", ["emails", "e-mails", "e-mail", "email"]],
+    ["site", "Site", ["site", "website"]],
+    ["redes", "Redes sociais", ["redes sociais", "redes", "linkedin", "instagram"]],
+    ["endereco", "Endereço", ["endereco", "logradouro"]],
+    ["bairro", "Bairro", ["bairro"]],
+    ["cep", "CEP", ["cep"]],
+    ["funcionarios", "Funcionários", ["qnt. de funcionarios", "funcionarios"]],
+    ["faturamento", "Faturamento", ["faturamento presumido", "faturamento"]],
+    ["porte", "Porte", ["porte"]],
+    ["tipo_unidade", "Matriz ou filial", ["tipo"]],
+    ["filiais", "Filiais", ["filiais"]],
+    ["cnae", "CNAE", ["cnae"]],
+    ["socios", "Quadro societário", ["quadro societario", "socios"]]
   ];
+  // Colunas da Leads2b que não entram (o time pediu para deixar de fora).
+  const IGNORAR = ["popularidade", "natureza juridica", "revelado por", "status", "dados", "tipo de entidade"];
 
   function adivinhar(cabecalho) {
     const h = cabecalho.map(norm);
-    const usado = new Set(), mapa = {};
+    const usado = new Set(h.map((x, k) => IGNORAR.includes(x) ? k : -1).filter(k => k >= 0)), mapa = {};
     CAMPOS.forEach(([campo, , nomes]) => {
       let i = -1;
       for (const n of nomes) { i = h.findIndex((x, k) => !usado.has(k) && x === n); if (i >= 0) break; }
@@ -1251,31 +1419,115 @@
     return mapa;
   }
 
+  // Conferência de duplicados: o mesmo CNPJ (ou, sem CNPJ, o mesmo nome + cidade) já enviado a qualquer unidade.
+  const soDigitos = (v) => String(v || "").replace(/\D/g, "");
+  const chaveNome = (empresa, cidade) => norm(empresa).replace(/\b(ltda|me|epp|eireli|s\/?a|sa|ss)\b\.?/g, "").replace(/[^a-z0-9]/g, "")
+    + "|" + norm(String(cidade || "").split("/")[0]).replace(/[^a-z0-9]/g, "");
+  const dataLonga = (v) => v ? String(v).slice(0, 10).split("-").reverse().join("/") : "";
+  function indiceDuplicados() {
+    const porCnpj = {}, porNome = {};
+    E.leads.forEach(l => {
+      const c = soDigitos(l.cnpj);
+      if (c.length >= 11) (porCnpj[c] = porCnpj[c] || []).push(l);
+      (porNome[chaveNome(l.empresa, l.cidade_uf)] = porNome[chaveNome(l.empresa, l.cidade_uf)] || []).push(l);
+    });
+    return (x) => {
+      const c = soDigitos(x.cnpj);
+      const nome = (porNome[chaveNome(x.empresa, x.cidade_uf)] || []).filter(l => c.length < 11 || soDigitos(l.cnpj).length < 11);
+      const achados = [...(c.length >= 11 ? porCnpj[c] || [] : []), ...nome];
+      if (!achados.length) return null;
+      // O mais importante primeiro: Cliente Azul, depois o mais recente.
+      return achados.sort((a, b) => (b.status === "Cliente Azul") - (a.status === "Cliente Azul") || String(b.atualizado_em || "").localeCompare(String(a.atualizado_em || "")))[0];
+    };
+  }
+  function ondeJaEsta(l) {
+    const ped = E.pedidos.find(p => p.id === l.solicitacao_id) || {};
+    const quem = perfilDe(ped.solicitante).nome || ped.solicitante_nome || "";
+    const det = l.status === "Cliente Azul" ? "Já é cliente. Outra unidade não deve abordar"
+      : l.status === "Sem interesse" ? [motivoDe(l) && "Motivo: " + motivoDe(l), l.tentar_em && "tentar de novo em " + dataLonga(l.tentar_em)].filter(Boolean).join(" · ")
+      : [ped.enviada_em && "Enviado em " + data(ped.enviada_em), quem].filter(Boolean).join(" · ");
+    return `Unidade <b>${esc(rotulo(l.sigla))}</b>, pedido ${esc(l.solicitacao_id)} · <span class="pilula-status" style="--cor:${COR[l.status] || "#8A94A6"}">${esc(l.status)}</span>${det ? `<div class="sec">${esc(det)}</div>` : ""}`;
+  }
+
   function janelaImportar(pedidoId) {
     const p = E.pedidos.find(x => x.id === pedidoId);
     const espaco = MAX - E.leads.filter(l => l.solicitacao_id === p.id).length;
     let linhas = [], cab = [], mapa = {};
+    const reenviar = {}; // chave do lead duplicado -> true quando o time marca "Enviar mesmo assim"
+    const jaExiste = indiceDuplicados();
     const desenharImport = (j) => {
       const corpo = j.querySelector("#imp-mapa");
       if (!cab.length) { corpo.innerHTML = ""; return; }
+      const limpeza = { tel: 0, redes: 0 };
       const montar = () => linhas.map(r => {
         const v = (c) => mapa[c] >= 0 ? String(r[mapa[c]] == null ? "" : r[mapa[c]]).trim() : "";
-        const cidade = v("cidade"), uf = v("uf");
-        return { empresa: v("empresa"), cnpj: v("cnpj") || null, segmento: v("segmento") || null,
+        const cidade = titulo(v("cidade")), uf = v("uf").toUpperCase();
+        const tels = API.lerTelefones(v("telefone"));
+        limpeza.tel += tels.descartados;
+        const base = dddBase(tels.lista);
+        const telefones = tels.lista.slice().sort((a, b) => ordemTel(a, base) - ordemTel(b, base));
+        const emails = API.lerEmails(v("email"));
+        const redes = listaCel(v("redes"));
+        const achar = (dom) => redes.find(x => x.toLowerCase().includes(dom)) || null;
+        limpeza.redes += redes.filter(x => !/linkedin\.com|instagram\.com/i.test(x)).length;
+        const segUnico = (p.segmentos || []).length === 1 ? p.segmentos[0] : null;
+        return { empresa: titulo(v("empresa")), fantasia: titulo(v("fantasia")) || null, cnpj: cnpjBonito(v("cnpj")) || null, segmento: v("segmento") || segUnico,
           cidade_uf: [cidade, uf && !cidade.includes("/") ? uf : ""].filter(Boolean).join("/") || null,
-          contato: v("contato") || null, telefone: v("telefone") || null, email: v("email") || null };
+          contato: titulo(v("contato")) || null, telefone: (telefones[0] || {}).n || null, email: emails[0] || null,
+          telefones, emails, site: limparLink(v("site")) || null, linkedin: limparLink(achar("linkedin.com")), instagram: limparLink(achar("instagram.com")),
+          endereco: titulo(v("endereco")) || null, bairro: titulo(v("bairro")) || null, cep: soDigitos(v("cep")) || null,
+          funcionarios: v("funcionarios") || null, faturamento: v("faturamento") || null, porte: v("porte") || null,
+          tipo_unidade: v("tipo_unidade") || null, filiais: v("filiais") || null,
+          cnaes: listaCel(v("cnae")).map(soDigitos).filter(Boolean), socios: listaCel(v("socios")).map(titulo) };
       }).filter(x => x.empresa);
       const todos = montar();
-      const prontos = todos.slice(0, espaco);
+      // Separa: novos, já no portal e repetidos dentro da própria planilha.
+      const vistos = new Set(), novos = [], dups = [], repetidos = [];
+      todos.forEach(x => {
+        const c = soDigitos(x.cnpj), k = c.length >= 11 ? "c" + c : "n" + chaveNome(x.empresa, x.cidade_uf);
+        if (vistos.has(k)) { repetidos.push(x); return; }
+        vistos.add(k);
+        const l = jaExiste(x);
+        if (l) dups.push({ x, l, k, bloqueado: l.status === "Cliente Azul" }); else novos.push(x);
+      });
+      const reenviados = dups.filter(d => !d.bloqueado && reenviar[d.k]).map(d => d.x);
+      const validos = [...novos, ...reenviados];
+      const prontos = validos.slice(0, espaco);
+      const reconhecido = ["telefone", "email", "cnpj", "empresa"].every(c => mapa[c] >= 0) && mapa.socios >= 0;
+      const ligadas = new Set(Object.values(mapa).filter(i => i >= 0));
+      const nomesLigados = new Set([...ligadas].map(i => norm(cab[i])));
+      const deFora = cab.filter((h, i) => h && !ligadas.has(i) && !nomesLigados.has(norm(h)));
       corpo.innerHTML = `
-        <p class="sub" style="margin:0 0 10px">Confira qual coluna da planilha vai para cada campo.</p>
+        ${reconhecido ? `<div class="imp-ok"><b>Formato da Leads2b reconhecido.</b> As colunas já foram ligadas sozinhas; abra “Conferir colunas” se quiser mudar.</div>` : ""}
+        <details class="imp-colunas"${reconhecido ? "" : " open"}><summary>Conferir colunas (${ligadas.size} ligadas)</summary>
+        <p class="sub" style="margin:8px 0 10px">Confira qual coluna da planilha vai para cada campo.</p>
         <div class="mapa">${CAMPOS.map(([c, rot]) => `<div class="campo"><label for="m-${c}">${rot}${c === "empresa" ? " (obrigatório)" : ""}</label>
           <select id="m-${c}" data-mapa="${c}"><option value="-1">Não usar</option>${cab.map((h, i) => `<option value="${i}"${mapa[c] === i ? " selected" : ""}>${esc(h || "Coluna " + (i + 1))}</option>`).join("")}</select></div>`).join("")}</div>
+        </details>
+        ${deFora.length ? `<div class="imp-fora"><b>Ficam de fora:</b> ${deFora.map(h => `<span class="etiqueta">${esc(h)}</span>`).join(" ")}${limpeza.redes ? ` <span class="etiqueta">Facebook, Twitter e outras redes</span>` : ""}</div>` : ""}
+        <div class="imp-resumo">
+          <div class="imp-n ok"><b>${novos.length}</b><span>empresa(s) nova(s)</span></div>
+          <div class="imp-n atencao"><b>${dups.length}</b><span>já estão no portal${dups.length ? " (ficam de fora)" : ""}</span></div>
+          <div class="imp-n neutro"><b>${repetidos.length}</b><span>repetida(s) na planilha</span></div>
+        </div>
+        ${dups.length ? `<div class="imp-dup">
+          <div class="imp-dup-topo"><b>Empresas que já estão no portal</b><span>Confere pelo CNPJ. Sem CNPJ, pelo nome + cidade</span></div>
+          <div class="imp-dup-rolar"><table><thead><tr><th>Empresa</th><th>Onde já está</th><th class="dir">Enviar mesmo assim?</th></tr></thead>
+          <tbody>${dups.map(d => `<tr><td><b>${esc(d.x.empresa)}</b><div class="sec">${esc(d.x.cnpj || d.x.cidade_uf || "")}</div></td><td>${ondeJaEsta(d.l)}</td>
+            <td class="dir">${d.bloqueado ? `<span class="sec">Bloqueado</span>` : `<label class="opcao-mini"><input type="checkbox" data-reenviar="${esc(d.k)}"${reenviar[d.k] ? " checked" : ""}> Enviar</label>`}</td></tr>`).join("")}</tbody></table></div>
+          <p class="imp-nota imp-dup-nota">Marcar “Enviar” manda o lead de novo; o histórico anterior continua guardado no pedido de origem. Cliente Azul nunca é reenviado.</p>
+        </div>` : ""}
+        ${limpeza.tel || limpeza.redes ? `<p class="imp-nota" style="margin:0 0 10px">Limpeza: ${[limpeza.tel && `${limpeza.tel} telefone(s) repetido(s) ou incompleto(s) removido(s)`, limpeza.redes && `${limpeza.redes} link(s) de Facebook, Twitter ou outras redes ignorado(s)`].filter(Boolean).join(" · ")}.</p>` : ""}
+        ${repetidos.length ? `<p class="imp-nota" style="margin:0 0 10px">Repetidas na planilha (só a primeira linha entra): ${repetidos.map(x => esc(x.empresa)).join(", ")}.</p>` : ""}
         <p style="margin:6px 0 8px"><b>${prontos.length}</b> leads prontos para enviar a ${esc(rotuloLongo(p.sigla))}${linhas.length - todos.length ? ` (${linhas.length - todos.length} linhas sem nome de empresa serão ignoradas)` : ""}.</p>
-        ${todos.length > espaco ? `<div class="erro-form">A planilha tem ${todos.length} empresas, mas cada pedido aceita até ${MAX} leads${espaco < MAX ? ` (ainda cabem ${espaco})` : ""}. Só as ${espaco} primeiras serão enviadas.</div>` : ""}
-        <div class="tabela-wrap"><table class="previa"><thead><tr><th>Empresa</th><th>CNPJ</th><th>Cidade/UF</th><th>Telefone</th><th>E-mail</th></tr></thead>
-          <tbody>${prontos.slice(0, 10).map(x => `<tr><td>${esc(x.empresa)}</td><td>${esc(x.cnpj)}</td><td>${esc(x.cidade_uf)}</td><td>${esc(foneBonito(x.telefone))}</td><td>${esc(API.limparEmail(x.email))}</td></tr>`).join("")}</tbody></table></div>`;
+        ${validos.length > espaco ? `<div class="erro-form">São ${validos.length} empresas para enviar, mas cada pedido aceita até ${MAX} leads${espaco < MAX ? ` (ainda cabem ${espaco})` : ""}. Entram as ${espaco} primeiras; as outras ${validos.length - espaco} ficam para o próximo pedido.</div>` : ""}
+        <div class="tabela-wrap"><table class="previa"><thead><tr><th>Empresa</th><th>CNPJ</th><th>Cidade/UF</th><th>Telefones</th><th>E-mails</th><th>Internet</th></tr></thead>
+          <tbody>${prontos.slice(0, 10).map(x => `<tr><td>${esc(x.empresa)}</td><td>${esc(x.cnpj)}</td><td>${esc(x.cidade_uf)}</td>
+            <td>${x.telefones.length > 1 ? `${x.telefones.length} (${x.telefones.filter(t => t.t === "cel").length} cel.)` : esc(foneTxt(x.telefone))}</td>
+            <td>${x.emails.length > 1 ? x.emails.length : esc(x.email || "")}</td>
+            <td>${[x.site && "Site", x.linkedin && "LinkedIn", x.instagram && "Instagram"].filter(Boolean).join(" · ")}</td></tr>`).join("")}</tbody></table></div>`;
       corpo.querySelectorAll("[data-mapa]").forEach(s => s.addEventListener("change", () => { mapa[s.dataset.mapa] = Number(s.value); desenharImport(j); }));
+      corpo.querySelectorAll("[data-reenviar]").forEach(c => c.addEventListener("change", () => { reenviar[c.dataset.reenviar] = c.checked; desenharImport(j); }));
       const enviar = j.querySelector("#imp-enviar");
       enviar.disabled = !prontos.length;
       enviar.textContent = prontos.length ? `Enviar ${prontos.length} leads para ${rotulo(p.sigla)}` : "Enviar leads";
@@ -1342,7 +1594,10 @@
     const linhas = filtrarLeads(E.leads).map(l => {
       const p = pedidoDe(l);
       return { "Pedido": l.solicitacao_id, "Unidade": l.sigla, "Região": p.regiao || "", "Representante": p.solicitante_nome || "", "Empresa": l.empresa, "CNPJ": l.cnpj || "",
-        "Segmento": l.segmento || "", "Cidade/UF": l.cidade_uf || "", "Contato": l.contato || "", "Telefone": foneBonito(l.telefone), "E-mail": API.limparEmail(l.email),
+        "Nome fantasia": l.fantasia || "", "Segmento": l.segmento || "", "Cidade/UF": l.cidade_uf || "", "Contato": l.contato || "", "Telefone": foneTxt(l.telefone), "E-mail": API.limparEmail(l.email),
+        "Todos os telefones": telefonesDe(l).filter(t => !t.errado).map(t => foneTxt(t.n)).join("; "), "Números errados": (l.tel_errados || []).map(foneTxt).join("; "),
+        "Todos os e-mails": emailsDe(l).join("; "), "Site": l.site || "", "LinkedIn": l.linkedin || "", "Instagram": l.instagram || "",
+        "Endereço": [l.endereco, l.bairro].filter(Boolean).join(" - "), "CEP": cepBonito(l.cep), "Porte": porteTexto(l), "CNAE": (l.cnaes || []).map(cnaeBonito).join("; "), "Sócios": (l.socios || []).join("; "),
         "Status": l.status, "Tem contato válido?": l.contato_valido || "", "Data do contato": data(l.data_contato), "Tentativas": tentativasDe(l),
         "Última tentativa": data(l.ultima_tentativa), "Próximo contato": data(l.retorno), "Horário": l.retorno_hora || "", "Lembrete": l.lembrete || "",
         "Motivo (Sem interesse)": l.status === "Sem interesse" ? motivoDe(l) : "", "Tentar de novo em": l.status === "Sem interesse" ? data(l.tentar_em) : "",
@@ -1368,9 +1623,9 @@
       ? `Olá, ${primeiroNome(p.nome)}! Seu acesso ao Portal de Leads foi liberado. Entre em ${urlPortal()} com seu e-mail e a senha que você criou.`
       : `Olá, ${primeiroNome(p.nome)}! Recebemos seu cadastro no Portal de Leads e já estamos conferindo.`;
     return `
-      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar.</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>${ehAdmin() ? "Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar." : "Só administradores aprovam, mudam o acesso e excluem cadastros. Aqui você consulta quem tem acesso."}</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
-      ${extras.length ? `<section class="bloco" style="margin-bottom:18px"><h2>Pedidos de acesso a outras unidades</h2>
+      ${extras.length && ehAdmin() ? `<section class="bloco" style="margin-bottom:18px"><h2>Pedidos de acesso a outras unidades</h2>
         <div class="tabela-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th>Unidade pedida</th><th>Unidades que já tem</th><th>Ações</th></tr></thead><tbody>
         ${extras.map(a => { const u = unidadeInfo(a.sigla); return `<tr><td><b>${esc(a.nome)}</b><div class="sec">${esc(a.email)}</div></td>
           <td><b>${esc(rotulo(a.sigla))}</b><div class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}</div></td>
@@ -1379,7 +1634,7 @@
         </tbody></table></div></section>` : ""}
       <div class="filtros">
         <div class="pilulas" role="group" aria-label="Situação do cadastro">
-          ${[["pendente", "Aguardando"], ["aprovado", "Aprovados"], ["recusado", "Recusados"]].map(([v, r]) => `<button data-pilula="cadastro" data-valor="${v}" aria-pressed="${E.f.cadastro === v}">${r} (${contar(v)})</button>`).join("")}
+          ${[["pendente", "Aguardando"], ["aprovado", "Aprovados"], ["recusado", "Recusados"], ["excluido", "Excluídos"]].map(([v, r]) => `<button data-pilula="cadastro" data-valor="${v}" aria-pressed="${E.f.cadastro === v}">${r} (${contar(v)})</button>`).join("")}
         </div>
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Nome, e-mail ou unidade"></div>
       </div>
@@ -1395,17 +1650,20 @@
             <td>${us.length ? us.map(a => { const u = unidadeInfo(a.sigla); return `<div><b>${esc(u.nome || a.sigla)}</b>${a.principal ? "" : " (extra)"} <span class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}${a.situacao !== "aprovado" ? " · " + esc(a.situacao) : ""}</span></div>`; }).join("") : `<span class="sec">${p.papel === "time" || !p.siglaPrincipal ? "Time (sem unidade)" : "–"}</span>`}
               ${!siglaOk ? `<div class="sec" style="color:var(--danger)">A sigla não bate com o e-mail</div>` : ""}</td>
             <td>${esc(foneBonito(p.celular || ""))}</td>
-            <td>${p.papel === "time" ? "Time (vê tudo)" : "Só as próprias unidades"}</td><td>${data(p.criadoEm)}</td>
+            <td>${p.papel === "admin" ? "<b>Administrador</b><div class=\"sec\">Vê tudo e gerencia cadastros</div>" : p.papel === "time" ? "Time<div class=\"sec\">Vê e trabalha pedidos e leads</div>" : "Só as próprias unidades"}</td>
+            <td>${data(p.criadoEm)}${p.situacao === "excluido" ? `<div class="sec">Excluído${p.excluido_em ? " em " + data(p.excluido_em) : ""}${p.excluido_por ? " por " + esc(p.excluido_por) : ""}</div>` : ""}</td>
             <td><div class="acoes">
+              ${!ehAdmin() ? (link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : `<span class="sec">–</span>`)
+              : p.situacao === "excluido" ? `<button class="btn btn-p" data-acao="reativar" data-id="${esc(p.id)}">Reativar</button>` : `
               ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>` : ""}
               ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
-              ${p.situacao === "aprovado" && !eu ? (p.papel === "time" ? `<button class="btn btn-p" data-acao="tornarRep" data-id="${esc(p.id)}">Tornar representante</button>` : `<button class="btn btn-p" data-acao="tornarTime" data-id="${esc(p.id)}">Tornar time</button>`) : ""}
+              ${p.situacao === "aprovado" && !eu ? ["representante", "time", "admin"].filter(x => x !== (p.papel || "representante")).map(x => `<button class="btn btn-p" data-acao="papel" data-papel="${x}" data-id="${esc(p.id)}">Tornar ${PAPEL[x].toLowerCase()}</button>`).join("") : ""}
               ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Esqueceu a senha</button>` : ""}
               ${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
-              ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}
+              ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}
             </div></td></tr>`;
         }).join("")}</tbody></table></div>`
-      : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
+      : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : E.f.cadastro === "excluido" ? "Nenhum cadastro excluído" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
   }
 
   function janelaExcluir(id) {
@@ -1417,12 +1675,12 @@
       <div class="janela-corpo">
         <p><b>Sai do portal:</b> o cadastro da pessoa e o acesso ${us.length ? "a " + esc(us.join(", ")) : "às unidades"}. Ela não consegue mais ver nem mexer em nada.</p>
         <p><b>Continua salvo:</b> ${qtd === 1 ? "o pedido dessas unidades, com" : qtd ? `os ${qtd} pedidos dessas unidades, com` : "os pedidos,"} os leads e todo o histórico. Outra pessoa da mesma unidade continua vendo tudo.</p>
-        <p class="sub">Se a pessoa voltar, ela refaz o cadastro com o mesmo e-mail e o time aprova de novo.</p>
+        <p class="sub">O cadastro vai para a aba <b>Excluídos</b>, com a data e quem excluiu. Se a pessoa voltar, use <b>Reativar</b> e aprove de novo.</p>
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-perigo" id="x-ok">Excluir cadastro</button></div>`,
     (j) => {
       j.querySelector("#x-ok").addEventListener("click", async (ev) => {
-        try { await ocupado(ev.currentTarget, () => API.excluirCadastro(id)); fechar(); await recarregar(); aviso("Cadastro excluído. Os pedidos e leads continuam salvos."); }
+        try { await ocupado(ev.currentTarget, () => API.excluirCadastro(id)); fechar(); await recarregar(); aviso("Cadastro excluído. Ele fica na aba Excluídos; os pedidos e leads continuam salvos."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
@@ -1569,7 +1827,7 @@
           <dl class="dados">
             <dt>Nome</dt><dd>${esc(p.nome)}</dd><dt>E-mail</dt><dd>${esc(p.email)}</dd><dt>Celular</dt><dd>${esc(foneBonito(p.celular || ""))}</dd>
             <dt>Cargo</dt><dd>${esc(p.cargo || "Representante")}</dd>
-            <dt>Acesso</dt><dd>${p.papel === "time" ? "Time de " + esc(TIME) : "Unidades"}</dd>
+            <dt>Acesso</dt><dd>${p.papel === "admin" ? "Administrador (" + esc(TIME) + ")" : p.papel === "time" ? "Time de " + esc(TIME) : "Unidades"}</dd>
           </dl>
           ${!ehTime() ? `<h2 style="margin-top:18px">Minhas unidades</h2>
             <div class="tabela-wrap"><table><thead><tr><th>Unidade</th><th>Cidade/UF</th><th>Região</th><th>Situação</th></tr></thead><tbody>

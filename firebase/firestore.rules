@@ -27,7 +27,9 @@ service cloud.firestore {
     function perfil() { return get(caminhoPerfil()).data; }
     // Sem confirmação de e-mail (o e-mail da Azul barra o remetente do Firebase): quem garante a pessoa é a aprovação do time.
     function aprovado() { return logado() && exists(caminhoPerfil()) && perfil().situacao == 'aprovado'; }
-    function ehTime() { return aprovado() && perfil().papel == 'time'; }
+    // Time (Inside Sales) trabalha pedidos e leads. Administrador também aprova cadastros, muda acessos e apaga.
+    function ehTime() { return aprovado() && perfil().papel in ['time', 'admin']; }
+    function ehAdmin() { return aprovado() && perfil().papel == 'admin'; }
 
     function caminhoAcesso(sigla) { return /databases/$(database)/documents/acessos/$(request.auth.uid + '_' + sigla); }
     function usaUnidade(sigla) {
@@ -39,11 +41,11 @@ service cloud.firestore {
     function statusLead() { return ['Novo', 'Prospecção', 'Em negociação', 'Em implantação', 'Embarque iniciado', 'Cliente Azul', 'Sem interesse', 'Contato inválido']; }
     function statusQueTrava() { return ['Novo', 'Prospecção']; }
     function chavesLead() { return ['l0', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8', 'l9']; }
-    function tiposHistorico() { return ['recebido', 'status', 'contato_valido', 'whatsapp', 'email', 'ligacao', 'observacao', 'agenda']; }
+    function tiposHistorico() { return ['recebido', 'status', 'contato_valido', 'whatsapp', 'email', 'ligacao', 'observacao', 'agenda', 'telefone']; }
     // Campos que o representante pode mudar em um lead.
     function camposDoRep() {
       return ['status', 'data_contato', 'contato_valido', 'atualizado_em', 'retorno', 'retorno_hora', 'lembrete', 'tentativas',
-              'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora'];
+              'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora', 'tel_errados'];
     }
     function motivosPerda() { return ['', 'Já usa outra transportadora', 'Achou o preço alto', 'Não faz envios', 'Sem volume agora', 'Decisor não atende', 'Outro motivo']; }
     function dataOuVazio(v) { return v == null || (v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))); }
@@ -75,16 +77,16 @@ service cloud.firestore {
         && request.resource.data.criadoEm == request.time;
 
       allow update: if
-        // o time aprova, recusa, muda o papel e corrige nome/celular
-        (ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao'])
-          && request.resource.data.papel in ['representante', 'time']
-          && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'])
+        // o administrador aprova, recusa, exclui (fica na aba Excluídos), muda o papel e corrige nome/celular
+        (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao', 'excluido_em', 'excluido_por'])
+          && request.resource.data.papel in ['representante', 'time', 'admin']
+          && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado', 'excluido'])
         // a própria pessoa marca o e-mail como confirmado (só se o Firebase confirmou)
         || (logado() && request.auth.uid == uid && request.auth.token.email_verified == true
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emailVerificado'])
           && request.resource.data.emailVerificado == true);
-      // O time exclui o cadastro (os pedidos, leads e histórico continuam salvos).
-      allow delete: if ehTime() && uid != request.auth.uid;
+      // Excluir de verdade só o administrador (o portal marca como "excluido" para manter a aba Excluídos).
+      allow delete: if ehAdmin() && uid != request.auth.uid;
     }
 
     // ---------- unidades ----------
@@ -104,7 +106,7 @@ service cloud.firestore {
         || (usaUnidade(sigla)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pedidoAtual'])
           && podePedirNovo(sigla, resource.data.pedidoAtual, request.resource.data.pedidoAtual));
-      allow delete: if ehTime();
+      allow delete: if ehAdmin();
     }
 
     function caminhoPedido(id) { return /databases/$(database)/documents/pedidos/$(id); }
@@ -133,10 +135,10 @@ service cloud.firestore {
           && (exists(/databases/$(database)/documents/unidades/$(request.resource.data.sigla))
             || existsAfter(/databases/$(database)/documents/unidades/$(request.resource.data.sigla)))
           && request.resource.data.criadoEm == request.time)
-        || ehTime();
-      allow update: if ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+        || ehAdmin();
+      allow update: if ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
         && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'];
-      allow delete: if ehTime() || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao != 'aprovado');
+      allow delete: if ehAdmin() || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao != 'aprovado');
     }
 
     // ---------- pedidos (com os leads dentro) ----------
@@ -168,6 +170,7 @@ service cloud.firestore {
         && textoOuNulo(novo.get('destinos', ''), 120)
         && textoOuNulo(novo.get('transportadora', ''), 120)
         && novo.get('motivo', '') in motivosPerda()
+        && novo.get('tel_errados', []) is list && novo.get('tel_errados', []).size() <= 80
         && novo.get('tentativas', 0) is int
         && (novo.get('tentativas', 0) == velho.get('tentativas', 0) || novo.get('tentativas', 0) == velho.get('tentativas', 0) + 1);
     }
@@ -212,11 +215,13 @@ service cloud.firestore {
           && request.resource.data.leads is map
           && request.resource.data.leads.keys().hasOnly(chavesLead())
           && request.resource.data.travando is int
-          && request.resource.data.liberada == (request.resource.data.travando == 0 && request.resource.data.leads.size() > 0))
+          && request.resource.data.liberada == (request.resource.data.travando == 0 && request.resource.data.leads.size() > 0)
+          // só o administrador apaga leads já enviados
+          && (ehAdmin() || request.resource.data.leads.keys().hasAll(resource.data.leads.keys())))
         // o representante só mexe em um lead por vez, nos campos dele
         || (usaUnidade(resource.data.sigla) && repAtualizouUmLead());
 
-      allow delete: if ehTime();
+      allow delete: if ehAdmin();
 
       // ---------- histórico de cada lead ----------
       match /historico/{hid} {
