@@ -400,20 +400,25 @@
   function telaEspera() {
     const p = E.perfil;
     const recusado = ["recusado", "excluido"].includes(p.situacao);
+    const faltaAcesso = p.situacao === "aprovado"; // aprovado, mas sem unidade liberada ou sem acesso de time
     const unid = (p.unidades || []).map(u => u.nome ? "da sua carteira" : "da unidade " + u.sigla).join(", ");
     $app.innerHTML = `
       <div class="carregando"><div class="vazio" style="max-width:520px">
         ${!recusado && E.cadastroNovo ? `<p class="selo selo-ok" style="margin:0 auto 10px">Cadastro realizado</p>` : ""}
-        <h2>${recusado ? "Seu acesso não foi aprovado" : E.cadastroNovo ? "Recebemos seu cadastro" : "Cadastro aguardando aprovação"}</h2>
+        <h2>${recusado ? "Seu acesso não foi aprovado" : faltaAcesso ? "Cadastro aprovado, falta liberar o acesso" : E.cadastroNovo ? "Recebemos seu cadastro" : "Cadastro aguardando aprovação"}</h2>
         <p>${recusado
           ? `Fale com o time de ${esc(TIME)} para revisar o seu cadastro.`
+          : faltaAcesso ? `Seu cadastro foi aprovado, mas o time de ${esc(TIME)} ainda precisa liberar ${p.cargo === "Inside Sales" ? "o seu acesso de time" : "a sua unidade"}. Assim que liberar, clique em “Já fui aprovado”.`
           : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Você recebe um aviso pelo WhatsApp quando estiver pronto.`}</p>
         <div class="acoes" style="justify-content:center">
           <button class="btn" id="b-atualizar">Já fui aprovado</button>
+          <button class="btn" id="b-celular">Alterar meu celular</button>
           <button class="btn" id="b-sair">Sair</button>
         </div>
+        <p class="sub" style="margin-top:12px">Seu celular: ${esc(foneBonito(p.celular || "") || "não informado")}</p>
       </div></div>`;
     document.getElementById("b-atualizar").onclick = () => iniciar();
+    document.getElementById("b-celular").onclick = () => janelaCelular();
     document.getElementById("b-sair").onclick = sair;
   }
 
@@ -504,7 +509,9 @@
     exportar: () => exportarLeads(),
     irPedidos: () => { E.tela = "pedidos"; desenhar(); },
     irLeads: () => { E.tela = "leads"; desenhar(); },
-    aprovar: (b) => mudar(() => API.aprovarCadastro(b.dataset.id), "Cadastro aprovado."),
+    aprovar: (b) => mudar(() => API.aprovarCadastro(b.dataset.id, b.dataset.papel), b.dataset.papel === "admin" ? "Aprovado como administrador." : b.dataset.papel === "time" ? "Aprovado como time." : "Cadastro aprovado."),
+    editarPessoa: (b) => janelaEditarPessoa(b.dataset.id),
+    meuCelular: () => janelaCelular(),
     recusar: (b) => mudar(() => API.atualizarPerfil(b.dataset.id, { situacao: "recusado" }), "Cadastro recusado."),
     papel: (b) => {
       const x = b.dataset.papel;
@@ -1655,15 +1662,69 @@
             <td><div class="acoes">
               ${!ehAdmin() ? (link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : `<span class="sec">–</span>`)
               : p.situacao === "excluido" ? `<button class="btn btn-p" data-acao="reativar" data-id="${esc(p.id)}">Reativar</button>` : `
-              ${p.situacao !== "aprovado" ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>` : ""}
+              ${p.situacao !== "aprovado" ? (p.cargo === "Inside Sales"
+                ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-papel="time" data-id="${esc(p.id)}">Aprovar como time</button><button class="btn btn-p" data-acao="aprovar" data-papel="admin" data-id="${esc(p.id)}">Aprovar como administrador</button>`
+                : `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>`) : ""}
+              ${p.situacao === "aprovado" && p.cargo === "Inside Sales" && (p.papel || "representante") === "representante" ? `<span class="etiqueta alerta">Falta liberar o acesso de time</span>` : ""}
               ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
               ${p.situacao === "aprovado" && !eu ? ["representante", "time", "admin"].filter(x => x !== (p.papel || "representante")).map(x => `<button class="btn btn-p" data-acao="papel" data-papel="${x}" data-id="${esc(p.id)}">Tornar ${PAPEL[x].toLowerCase()}</button>`).join("") : ""}
               ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Esqueceu a senha</button>` : ""}
+              <button class="btn btn-p" data-acao="editarPessoa" data-id="${esc(p.id)}">Editar dados</button>
               ${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
               ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}
             </div></td></tr>`;
         }).join("")}</tbody></table></div>`
       : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : E.f.cadastro === "excluido" ? "Nenhum cadastro excluído" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
+  }
+
+  // Celular: só números, com DDD (tira o 55 do Brasil se vier).
+  function celularLimpo(v) {
+    let d = String(v || "").replace(/\D/g, "");
+    if (d.length >= 12 && d.startsWith("55")) d = d.slice(2);
+    return d.length === 10 || d.length === 11 ? d : "";
+  }
+  function janelaCelular() {
+    const p = E.perfil;
+    abrir(`
+      <div class="janela-topo"><div><h2>Alterar meu celular</h2><p>É por ele que o time avisa pelo WhatsApp.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo">
+        <div class="campo"><label for="c-cel">Celular com DDD</label><input id="c-cel" type="tel" inputmode="tel" autocomplete="tel" value="${esc(foneBonito(p.celular || ""))}" placeholder="(11) 91234-5678"><span class="dica">Exemplo: (11) 91234-5678</span></div>
+        <div class="erro-form" id="c-erro" hidden></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-primario" id="c-ok">Salvar</button></div>`,
+    (j) => {
+      j.querySelector("#c-ok").addEventListener("click", async (ev) => {
+        const cel = celularLimpo(j.querySelector("#c-cel").value), erro = j.querySelector("#c-erro");
+        if (!cel) { erro.textContent = "Digite o celular com DDD, por exemplo (11) 91234-5678."; erro.hidden = false; return; }
+        try { await ocupado(ev.currentTarget, () => API.mudarMeuCelular(cel)); E.perfil.celular = cel; fechar(); aviso("Celular atualizado."); if (E.perfil.situacao === "aprovado" && (ehTime() || minhasUnidades().length)) desenhar(); else telaEspera(); }
+        catch (e) { aviso(API.traduzir(e), true); }
+      });
+    });
+  }
+  function janelaEditarPessoa(id) {
+    const p = E.perfis.find(x => x.id === id);
+    abrir(`
+      <div class="janela-topo"><div><h2>Editar dados</h2><p>${esc(p.email)}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo">
+        <div class="campo"><label for="e-nome">Nome</label><input id="e-nome" type="text" maxlength="120" value="${esc(p.nome || "")}"></div>
+        <div class="campo"><label for="e-cel">Celular com DDD</label><input id="e-cel" type="tel" value="${esc(foneBonito(p.celular || ""))}" placeholder="(11) 91234-5678"></div>
+        <p class="sub">O e-mail não muda: ele é o login da pessoa.</p>
+        <div class="erro-form" id="e-erro" hidden></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-primario" id="e-ok">Salvar</button></div>`,
+    (j) => {
+      j.querySelector("#e-ok").addEventListener("click", async (ev) => {
+        const nome = j.querySelector("#e-nome").value.trim(), cel = celularLimpo(j.querySelector("#e-cel").value), erro = j.querySelector("#e-erro");
+        if (nome.length < 2) { erro.textContent = "Digite o nome."; erro.hidden = false; return; }
+        if (!cel) { erro.textContent = "Digite o celular com DDD, por exemplo (11) 91234-5678."; erro.hidden = false; return; }
+        const dados = {};
+        if (nome !== p.nome) dados.nome = nome;
+        if (cel !== p.celular) dados.celular = cel;
+        if (!Object.keys(dados).length) { fechar(); return; }
+        try { await ocupado(ev.currentTarget, () => API.atualizarPerfil(id, dados)); fechar(); await recarregar(); aviso("Dados atualizados."); }
+        catch (e) { aviso(API.traduzir(e), true); }
+      });
+    });
   }
 
   function janelaExcluir(id) {
@@ -1821,11 +1882,11 @@
     });
     const us = p.unidades || [];
     return `
-      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha conta</h1><p>Para corrigir nome ou celular, fale com o time de ${esc(TIME)}.</p></div></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha conta</h1><p>Você mesmo pode alterar o celular. Para corrigir o nome, fale com o time de ${esc(TIME)}.</p></div></div>
       <div class="paineis">
         <section class="bloco"><h2>Meus dados</h2>
           <dl class="dados">
-            <dt>Nome</dt><dd>${esc(p.nome)}</dd><dt>E-mail</dt><dd>${esc(p.email)}</dd><dt>Celular</dt><dd>${esc(foneBonito(p.celular || ""))}</dd>
+            <dt>Nome</dt><dd>${esc(p.nome)}</dd><dt>E-mail</dt><dd>${esc(p.email)}</dd><dt>Celular</dt><dd>${esc(foneBonito(p.celular || ""))} <button class="link-mini" data-acao="meuCelular">Alterar</button></dd>
             <dt>Cargo</dt><dd>${esc(p.cargo || "Representante")}</dd>
             <dt>Acesso</dt><dd>${p.papel === "admin" ? "Administrador (" + esc(TIME) + ")" : p.papel === "time" ? "Time de " + esc(TIME) : "Unidades"}</dd>
           </dl>
@@ -1843,6 +1904,29 @@
           </form></section>
       </div>`;
   }
+
+  // Atualização automática: quando o time publica uma versão nova (index.html com outro número em <meta name="versao">),
+  // a página recarrega sozinha, sem precisar de Ctrl+F5. Se tiver uma janela aberta, só avisa.
+  const VERSAO = (document.querySelector('meta[name="versao"]') || {}).content || "";
+  let ultimaChecagem = 0;
+  async function verificarVersao() {
+    if (API.demo || !VERSAO || Date.now() - ultimaChecagem < 4 * 60 * 1000) return;
+    ultimaChecagem = Date.now();
+    try {
+      const html = await fetch("index.html?nc=" + Date.now(), { cache: "no-store" }).then(r => r.text());
+      const m = html.match(/<meta name="versao" content="([^"]+)"/);
+      if (!m || m[1] === VERSAO) return;
+      const recarregar = () => location.replace(location.pathname + "?v=" + encodeURIComponent(m[1]));
+      if (!$janela.open) return recarregar();
+      const t = document.getElementById("toast");
+      t.innerHTML = `Há uma versão nova do portal. <button class="link-mini" id="b-versao">Atualizar agora</button>`;
+      clearTimeout(toastTimer); t.className = "toast ver";
+      document.getElementById("b-versao").onclick = recarregar;
+    } catch (e) { /* sem internet: tenta depois */ }
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") verificarVersao(); });
+  setInterval(verificarVersao, 10 * 60 * 1000);
+  setTimeout(verificarVersao, 5000);
 
   iniciar();
 })();

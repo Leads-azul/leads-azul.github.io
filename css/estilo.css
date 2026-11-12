@@ -539,3 +539,4 @@ fieldset.extra .sub { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
   .ct-acoes .btn-mini { flex: 1; padding: 8px 10px; }
 }
 .ct-listas { margin-top: 4px; }
+.toast .link-mini { color: #fff; font-weight: 600; }

@@ -81,6 +81,10 @@ service cloud.firestore {
         (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao', 'excluido_em', 'excluido_por'])
           && request.resource.data.papel in ['representante', 'time', 'admin']
           && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado', 'excluido'])
+        // a própria pessoa corrige o celular dela
+        || (logado() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['celular'])
+          && texto(request.resource.data.celular, 30) && request.resource.data.celular.size() >= 10)
         // a própria pessoa marca o e-mail como confirmado (só se o Firebase confirmou)
         || (logado() && request.auth.uid == uid && request.auth.token.email_verified == true
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['emailVerificado'])

@@ -230,6 +230,7 @@
       },
       async sair() { await auth.signOut(); },
       async trocarSenha(nova) { await auth.currentUser.updatePassword(nova); },
+      async mudarMeuCelular(celular) { await db.doc("perfis/" + auth.currentUser.uid).update({ celular }); },
 
       async meuPerfil() {
         const u = auth.currentUser; if (!u) return null;
@@ -261,9 +262,9 @@
       async atualizarPerfil(id, dados) { await db.doc("perfis/" + id).update(dados); },
       async atualizarAcesso(id, situacao) { await db.doc("acessos/" + id).update({ situacao }); },
       // Aprova a pessoa e a unidade principal dela de uma vez.
-      async aprovarCadastro(id) {
+      async aprovarCadastro(id, papel) {
         const lote = db.batch();
-        lote.update(db.doc("perfis/" + id), { situacao: "aprovado" });
+        lote.update(db.doc("perfis/" + id), { situacao: "aprovado", ...(papel ? { papel } : {}) });
         const acs = (await db.collection("acessos").where("uid", "==", id).where("principal", "==", true).get()).docs;
         acs.forEach(a => lote.update(a.ref, { situacao: "aprovado" }));
         await lote.commit();
@@ -476,6 +477,7 @@
       async simularConfirmacao() { eu().emailVerificado = true; },
       async sair() { usuario = null; },
       async trocarSenha() { await espera(); },
+      async mudarMeuCelular(celular) { await espera(); if (!eu()) negar(); eu().celular = celular; },
       async meuPerfil() {
         if (!eu()) return null;
         const unidades = db.acessos.filter(a => a.uid === usuario.id).map(a => ({ ...copia(db.unidades.find(u => u.sigla === a.sigla) || { sigla: a.sigla }), acesso: a.situacao, principal: a.principal, acessoId: a.id }));
@@ -494,7 +496,7 @@
       async atualizarAcesso(id, situacao) { if (!ehAdmin()) negar(); db.acessos.find(a => a.id === id).situacao = situacao; },
       async excluirCadastro(id) { if (!ehAdmin() || id === usuario.id) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "excluido", excluido_em: new Date().toISOString(), excluido_por: eu().nome }); db.acessos.filter(a => a.uid === id).forEach(a => a.situacao = "recusado"); },
       async reativarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "pendente"; },
-      async aprovarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "aprovado"; db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
+      async aprovarCadastro(id, papel) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "aprovado", ...(papel ? { papel } : {}) }); db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
       async enviarRedefinicao() { if (!ehTime()) negar(); await espera(); },
       async pedidos(siglas) {
         const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : ehTime());
