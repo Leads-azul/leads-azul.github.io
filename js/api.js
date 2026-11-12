@@ -48,6 +48,13 @@
   }
 
   // Limpa o que vem da Leads2b: "Nome <a@b.com>; c@d.com" -> "a@b.com"; telefone só com números.
+  // Histórico de um lead, do mais novo para o mais antigo. Se o time apagou os leads do pedido e importou de novo,
+  // a mesma posição (l0..l9) recebe outra empresa: mostra só o que veio depois do último "recebido".
+  function desdeRecebido(lista) {
+    const asc = lista.slice().sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em)));
+    let i = -1; asc.forEach((h, n) => { if (h.tipo === "recebido") i = n; });
+    return asc.slice(Math.max(0, i)).reverse();
+  }
   function limparEmail(v) {
     const m = String(v || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
     return m ? m[0].toLowerCase() : "";
@@ -59,6 +66,28 @@
     if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
     d = d.replace(/^0+/, "");
     return d.length >= 10 ? d : "";
+  }
+
+  // O que vai para o histórico quando um lead muda (status, motivo, contato válido, próximo contato, tentativa).
+  const dataBR = (v) => v ? String(v).slice(0, 10).split("-").reverse().join("/") : "";
+  function motivoTexto(l) { return l.motivo === "Outro motivo" ? (l.motivo_outro || "Outro motivo") : (l.motivo || ""); }
+  function eventosDoLead(antes, depois, dados, tentativa) {
+    const ev = [];
+    if (tentativa) ev.push([tentativa.canal, `Tentativa ${depois.tentativas} · ${tentativa.texto}`]);
+    const extraMotivo = depois.status === "Sem interesse" && depois.motivo
+      ? ` · Motivo: ${motivoTexto(depois)}${depois.tentar_em ? ` · tentar de novo em ${dataBR(depois.tentar_em)}` : ""}` : "";
+    if (dados.status && dados.status !== antes.status) ev.push(["status", `Status: ${antes.status} → ${dados.status}${extraMotivo}`]);
+    else if (depois.status === "Sem interesse" && (depois.motivo !== antes.motivo || depois.motivo_outro !== antes.motivo_outro || depois.tentar_em !== antes.tentar_em) && depois.motivo)
+      ev.push(["status", `Sem interesse${extraMotivo}`]);
+    if (dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) ev.push(["contato_valido", `Tem contato válido? ${dados.contato_valido}`]);
+    if (depois.retorno && (depois.retorno !== antes.retorno || depois.retorno_hora !== antes.retorno_hora || depois.lembrete !== antes.lembrete))
+      ev.push(["agenda", `Próximo contato: ${dataBR(depois.retorno)}${depois.retorno_hora ? " às " + depois.retorno_hora : ""}${depois.lembrete ? " · " + depois.lembrete : ""}`]);
+    return ev;
+  }
+  function aplicarTentativa(antes, depois, tentativa) {
+    if (!tentativa) return;
+    depois.tentativas = (Number(antes.tentativas) || 0) + 1;
+    depois.ultima_tentativa = new Date().toISOString();
   }
 
   const travandoDe = (leads) => Object.values(leads || {}).filter(l => TRAVA.has(l.status)).length;
@@ -243,8 +272,9 @@
       },
       async apagarLeadsDoPedido(pedidoId) { await db.doc("pedidos/" + pedidoId).update({ leads: {}, liberada: false, travando: 0, alterado: null }); },
 
-      // Representante ou time: muda status, data e "tem contato válido?". Grava o histórico junto.
-      async atualizarLead(id, dados) {
+      // Representante ou time: muda os campos do lead (status, datas, motivo, próximo contato...) e grava o histórico junto.
+      // tentativa = { canal, texto }: conta mais uma tentativa de contato.
+      async atualizarLead(id, dados, tentativa) {
         const [pid, k] = separarId(id);
         const ref = db.doc("pedidos/" + pid);
         let saida;
@@ -252,6 +282,7 @@
           const p = (await t.get(ref)).data();
           const antes = p.leads[k];
           const depois = { ...antes, ...dados, atualizado_em: new Date().toISOString() };
+          aplicarTentativa(antes, depois, tentativa);
           const leads = { ...p.leads, [k]: depois };
           const liberada = liberadaDe(leads);
           const upd = { [`leads.${k}`]: depois, liberada, travando: travandoDe(leads), alterado: k };
@@ -260,9 +291,8 @@
             if (upd.situacao !== p.situacao) upd.concluida_em = liberada ? TS() : null;
           }
           t.update(ref, upd);
-          const reg = (tipo, texto) => t.set(ref.collection("historico").doc(), { lead: k, tipo, texto, autor: auth.currentUser.uid, autor_nome: cacheNome, criado_em: TS(), editado_em: null });
-          if (dados.status && dados.status !== antes.status) reg("status", `Status: ${antes.status} → ${dados.status}`);
-          if (dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) reg("contato_valido", `Tem contato válido? ${dados.contato_valido}`);
+          const reg = (tipo, texto) => t.set(ref.collection("historico").doc(), { lead: k, tipo, texto: texto.slice(0, 2000), autor: auth.currentUser.uid, autor_nome: cacheNome, criado_em: TS(), editado_em: null });
+          eventosDoLead(antes, depois, dados, tentativa).forEach(([tipo, texto]) => reg(tipo, texto));
           saida = depois;
         });
         return saida;
@@ -272,7 +302,7 @@
       async historico(leadId) {
         const [pid, k] = separarId(leadId);
         const q = await db.collection(`pedidos/${pid}/historico`).where("lead", "==", k).get();
-        return q.docs.map(doc).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em)));
+        return desdeRecebido(q.docs.map(doc));
       },
       async registrar(leadId, tipo, texto) {
         const [pid, k] = separarId(leadId);
@@ -325,8 +355,14 @@
     nomes.forEach((n, i) => {
       leadsCpq["l" + i] = { empresa: n, cnpj: `00.000.000/0001-${String(10 + i).padStart(2, "0")}`, segmento: "Confecções", cidade_uf: "Campinas/SP",
         contato: "Contato fictício", telefone: `1990000${String(1000 + i)}`, email: `contato${i}@exemplo.com.br`, status: sts[i],
-        data_contato: sts[i] === "Novo" ? null : hojeMenos(8 - i), contato_valido: sts[i] === "Novo" ? "" : "Sim", atualizado_em: iso(agora - (12 - i) * dia) };
+        data_contato: sts[i] === "Novo" ? null : hojeMenos(8 - i), contato_valido: sts[i] === "Novo" ? "" : "Sim", atualizado_em: iso(agora - (12 - i) * dia),
+        tentativas: [2, 2, 3, 3, 0, 0, 1, 0][i], ultima_tentativa: [2, 2, 3, 3, 0, 0, 1, 0][i] ? iso(agora - (2 + i) * dia) : null };
     });
+    // Exemplos das novidades: próximo contato, motivo de perda e qualificação.
+    Object.assign(leadsCpq.l0, { retorno: hojeMenos(0), retorno_hora: "10:00", lembrete: "Retornar com a cotação para Vinhedo.", volume: "~20 envios/mês", destinos: "Interior de SP e Sul de MG", transportadora: "Correios" });
+    Object.assign(leadsCpq.l1, { motivo: "Sem volume agora", tentar_em: hojeMenos(0), lembrete: "" });
+    Object.assign(leadsCpq.l3, { retorno: hojeMenos(1), retorno_hora: "14:00", lembrete: "Ligar depois das 14h, ela decide as compras." });
+    Object.assign(leadsCpq.l6, { retorno: hojeMenos(-3), retorno_hora: "", lembrete: "Mandar a mensagem de retomada." });
     db.pedidos.push({ id: "CPQ-1", sigla: "CPQ", regiao: "Sudeste", cidade_uf: "Campinas/SP", solicitante: "r1", solicitante_nome: "Marina Exemplo",
       segmentos: ["Confecções", "Indústria têxtil"], cidades: ["Campinas/SP"], empresas: null, situacao: "Enviada", previsao: hojeMenos(10),
       responsavel: "Time Inside Sales", observacao_time: null, leads: leadsCpq, liberada: false, criada_em: iso(agora - 13 * dia), enviada_em: iso(agora - 12 * dia), concluida_em: null });
@@ -441,23 +477,23 @@
         Object.assign(p, d);
       },
       async apagarLeadsDoPedido(pedidoId) { if (!ehTime()) negar(); const p = db.pedidos.find(x => x.id === pedidoId); p.leads = {}; p.liberada = false; },
-      async atualizarLead(id, dados) {
+      async atualizarLead(id, dados, tentativa) {
         await espera();
         const [pid, k] = separarId(id);
         const p = db.pedidos.find(x => x.id === pid);
         if (!usa(p.sigla)) negar();
         const antes = p.leads[k];
         const depois = { ...antes, ...dados, atualizado_em: new Date().toISOString() };
+        aplicarTentativa(antes, depois, tentativa);
         p.leads[k] = depois;
         p.liberada = liberadaDe(p.leads); p.travando = travandoDe(p.leads); p.alterado = k;
         if (["Enviada", "Concluída"].includes(p.situacao)) { const s = p.liberada ? "Concluída" : "Enviada"; if (s !== p.situacao) p.concluida_em = p.liberada ? new Date().toISOString() : null; p.situacao = s; }
-        if (dados.status && dados.status !== antes.status) reg(pid, k, "status", `Status: ${antes.status} → ${dados.status}`);
-        if (dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) reg(pid, k, "contato_valido", `Tem contato válido? ${dados.contato_valido}`);
+        eventosDoLead(antes, depois, dados, tentativa).forEach(([tipo, texto]) => reg(pid, k, tipo, texto));
         return copia(depois);
       },
       async historico(leadId) {
         const [pid, k] = separarId(leadId);
-        return copia(db.historico.filter(h => h.pedido === pid && h.lead === k)).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em)));
+        return desdeRecebido(copia(db.historico.filter(h => h.pedido === pid && h.lead === k)));
       },
       async registrar(leadId, tipo, texto) { await espera(); const [pid, k] = separarId(leadId); reg(pid, k, tipo, texto); },
       async editarObservacao(leadId, hid, texto) {

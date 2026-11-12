@@ -39,7 +39,14 @@ service cloud.firestore {
     function statusLead() { return ['Novo', 'Prospecção', 'Em negociação', 'Em implantação', 'Embarque iniciado', 'Cliente Azul', 'Sem interesse', 'Contato inválido']; }
     function statusQueTrava() { return ['Novo', 'Prospecção']; }
     function chavesLead() { return ['l0', 'l1', 'l2', 'l3', 'l4', 'l5', 'l6', 'l7', 'l8', 'l9']; }
-    function tiposHistorico() { return ['recebido', 'status', 'contato_valido', 'whatsapp', 'email', 'ligacao', 'observacao']; }
+    function tiposHistorico() { return ['recebido', 'status', 'contato_valido', 'whatsapp', 'email', 'ligacao', 'observacao', 'agenda']; }
+    // Campos que o representante pode mudar em um lead.
+    function camposDoRep() {
+      return ['status', 'data_contato', 'contato_valido', 'atualizado_em', 'retorno', 'retorno_hora', 'lembrete', 'tentativas',
+              'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora'];
+    }
+    function motivosPerda() { return ['', 'Já usa outra transportadora', 'Achou o preço alto', 'Não faz envios', 'Sem volume agora', 'Decisor não atende', 'Outro motivo']; }
+    function dataOuVazio(v) { return v == null || (v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))); }
 
     function texto(v, max) { return v is string && v.size() <= max; }
     function textoOuNulo(v, max) { return v == null || texto(v, max); }
@@ -149,6 +156,21 @@ service cloud.firestore {
           && ((request.resource.data.situacao == 'Concluída' && request.resource.data.liberada == true)
             || (request.resource.data.situacao == 'Enviada' && request.resource.data.liberada == false)));
     }
+    // Próximo contato, tentativas, motivo e qualificação: tipos e tamanhos.
+    function extrasOk(novo, velho) {
+      return dataOuVazio(novo.get('retorno', ''))
+        && dataOuVazio(novo.get('tentar_em', ''))
+        && textoOuNulo(novo.get('retorno_hora', ''), 5)
+        && textoOuNulo(novo.get('ultima_tentativa', ''), 40)
+        && textoOuNulo(novo.get('lembrete', ''), 200)
+        && textoOuNulo(novo.get('motivo_outro', ''), 200)
+        && textoOuNulo(novo.get('volume', ''), 120)
+        && textoOuNulo(novo.get('destinos', ''), 120)
+        && textoOuNulo(novo.get('transportadora', ''), 120)
+        && novo.get('motivo', '') in motivosPerda()
+        && novo.get('tentativas', 0) is int
+        && (novo.get('tentativas', 0) == velho.get('tentativas', 0) || novo.get('tentativas', 0) == velho.get('tentativas', 0) + 1);
+    }
     function repAtualizouUmLead() {
       let k = request.resource.data.alterado;
       let novo = request.resource.data.leads[k];
@@ -156,7 +178,8 @@ service cloud.firestore {
       return k in chavesLead() && k in resource.data.leads
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['leads', 'liberada', 'travando', 'alterado', 'situacao', 'concluida_em'])
         && request.resource.data.leads.diff(resource.data.leads).affectedKeys().hasOnly([k])
-        && novo.diff(velho).affectedKeys().hasOnly(['status', 'data_contato', 'contato_valido', 'atualizado_em'])
+        && novo.diff(velho).affectedKeys().hasOnly(camposDoRep())
+        && extrasOk(novo, velho)
         && novo.status in statusLead()
         && novo.get('contato_valido', '') in ['', 'Sim', 'Não']
         && contadorCerto(velho.status, novo.status)

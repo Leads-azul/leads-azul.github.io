@@ -28,8 +28,30 @@ window.LISTAS = {
   mensagens: {
     whatsapp: "Olá{contato}, tudo bem? Aqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nTrabalhamos com envios para todo o Brasil e gostaria de apresentar uma proposta para a {empresa}.\nPodemos conversar rapidamente sobre o volume de envios de vocês?",
     emailAssunto: "Azul Logística: proposta de envios para {empresa}",
-    email: "Olá{contato}, tudo bem?\n\nAqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nTrabalhamos com envios para todo o Brasil e gostaria de apresentar uma proposta para a {empresa}.\n\nPosso te ligar para entender o volume de envios de vocês?\n\nAbraço,\n{nome}\nAzul Logística · {celular}"
+    email: "Olá{contato}, tudo bem?\n\nAqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nTrabalhamos com envios para todo o Brasil e gostaria de apresentar uma proposta para a {empresa}.\n\nPosso te ligar para entender o volume de envios de vocês?\n\nAbraço,\n{nome}\nAzul Logística · {celular}",
+    // Retomada: usada a partir da 2ª tentativa, quando a empresa ainda não respondeu.
+    whatsappRetomada: "Oi{contato}! Aqui é {nome}, da Azul Logística em {cidade}.\nTe mandei uma mensagem há alguns dias sobre os envios da {empresa}.\nConsegue me dizer um bom horário para uma conversa rápida, de 5 minutos?",
+    emailRetomadaAssunto: "Retomando: envios da {empresa} com a Azul Logística",
+    emailRetomada: "Olá{contato}, tudo bem?\n\nTe escrevi há alguns dias sobre os envios da {empresa}.\nSe fizer sentido, me diga um bom horário para uma conversa rápida, de 5 minutos, ou com quem devo falar sobre os envios da empresa.\n\nAbraço,\n{nome}\nAzul Logística, unidade {sigla} · {celular}"
   },
+
+  // Depois de quantas tentativas sem avanço o portal pede uma decisão sobre o lead.
+  tentativasParaDecidir: 3,
+
+  // Motivos ao marcar "Sem interesse". "Outro motivo" abre um campo para escrever.
+  motivosPerda: ["Já usa outra transportadora", "Achou o preço alto", "Não faz envios", "Sem volume agora", "Decisor não atende", "Outro motivo"],
+
+  // Status em que aparecem os dados de qualificação (volume, destinos, transportadora atual).
+  statusQualificacao: ["Em negociação", "Em implantação", "Embarque iniciado", "Cliente Azul"],
+
+  // Dicas de abordagem que aparecem na ficha do lead.
+  dicas: [
+    ["“Já tenho transportadora.”", "Ótimo, então vocês já enviam. Pergunte para onde mais enviam e se algum destino sofre com prazo ou custo. Ofereça uma cotação só desse trecho, sem compromisso."],
+    ["“Manda por e-mail.”", "Envie, mas combine o retorno: “Te mando agora e te ligo quinta às 10h para tirar dúvidas, pode ser?”. Marque o próximo contato no portal."],
+    ["“Está caro.”", "Pergunte com o que está comparando e qual o volume. Preço muda com volume e frequência: anote esses dados e peça apoio ao time."],
+    ["“Não é comigo.”", "Peça o nome e o melhor horário de quem cuida dos envios ou das compras. Anote no lembrete do próximo contato."],
+    ["“Agora não é um bom momento.”", "Pergunte quando aumenta a demanda (datas sazonais, lançamentos) e marque Sem interesse com “Sem volume agora” e “Tentar de novo” na data certa."]
+  ],
 
   segmentos: `Abatedouros
 Academias

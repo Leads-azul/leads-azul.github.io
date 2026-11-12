@@ -415,3 +415,69 @@ dialog::backdrop { background: rgba(11, 26, 56, .45); }
 .btn-perigo-leve { color: var(--danger); background: #fff; border-color: var(--line); }
 .btn-perigo-leve:hover { background: var(--danger-50); }
 #x-ok.btn-perigo { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+/* ---------- Agenda, tentativas e motivo (v3) ---------- */
+.etiqueta.info { background: var(--blue-50); color: var(--blue-700); border-color: transparent; }
+.etiqueta.info-leve { background: #fff; color: var(--blue-700); border-color: #C9DAF7; }
+.etiqueta.atencao { background: var(--warn-50); color: #7A4F00; border-color: #F0D9A8; }
+.etiquetas-lista { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+
+.hoje { background: var(--surface); border: 2px solid var(--blue); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 22px; }
+.hoje h2 { margin: 0 0 12px; font-size: 17px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.qtd-hoje { background: var(--blue-50); color: var(--blue-700); border-radius: 999px; padding: 1px 10px; font-size: 13px; font-weight: 500; }
+.hoje-lista { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.hoje-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; background: #fff; text-align: left; }
+.hoje-item:hover { border-color: var(--line-2); }
+.hoje-item.atrasado { background: #FFF8F8; border-color: #F3C8C8; }
+.hoje-quando { font-size: 12px; font-weight: 600; color: var(--blue-700); }
+.hoje-item.atrasado .hoje-quando { color: #A12E2E; }
+.hoje-item .sec { font-size: 13px; color: var(--muted); }
+.hoje-lembrete { font-size: 13px; color: var(--ink); }
+.hoje-acoes { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.hoje-acoes .btn { flex: 1 1 auto; min-height: 40px; }
+.hoje-vazio { border: 1px dashed var(--line-2); display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; padding: 12px 16px; color: var(--muted); font-size: 14px; }
+.hoje-vazio b { color: var(--ink); }
+
+.decidir { background: var(--warn-50); border: 1px solid #F0D9A8; border-radius: 12px; padding: 12px 14px; margin: 0 0 16px; color: #4A3300; }
+.decidir-topo { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.decidir-topo span { font-size: 12.5px; }
+.decidir p { margin: 6px 0 10px; font-size: 13.5px; }
+.acoes-linha { display: flex; gap: 8px; flex-wrap: wrap; }
+.decidir .btn { background: #fff; border-color: #D9B66A; }
+.ok-tentativa { background: var(--success-50); color: #146B40; border-radius: 10px; padding: 9px 12px; font-size: 13.5px; margin: 0 0 14px; }
+.tentativas-txt { align-self: center; font-size: 13px; color: var(--muted); }
+
+.dicas { border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; margin: 0 0 16px; font-size: 13.5px; }
+.dicas summary { cursor: pointer; padding: 10px 0; font-weight: 500; color: var(--blue-700); }
+.dicas dl { margin: 0 0 12px; }
+.dicas dt { font-weight: 600; margin-top: 8px; }
+.dicas dd { margin: 2px 0 0; color: var(--muted); }
+
+fieldset.extra { border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px 14px; margin: 4px 0 16px; min-width: 0; }
+fieldset.extra.destaque { border: 2px solid var(--blue); }
+fieldset.extra legend { font-weight: 600; padding: 0 6px; font-size: 14.5px; }
+fieldset.extra .sub { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.opcoes-grade { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.opcao { text-align: left; background: #fff; border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; cursor: pointer; font-size: 14px; }
+.opcao[aria-pressed="true"] { background: var(--blue-50); border: 2px solid var(--blue); padding: 9px 11px; color: var(--blue-700); font-weight: 500; }
+.caixa-cinza { background: var(--canvas); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.caixa-cinza .sub { margin: 0; }
+.pilulas-op { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.caixa-cinza .pilulas-op { margin: 0; }
+.pilula-op { background: #fff; border: 1px solid var(--line-2); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+.pilula-op[aria-pressed="true"] { background: var(--blue); color: #fff; border-color: var(--blue); font-weight: 500; }
+.grade-agenda { display: grid; grid-template-columns: 160px 130px minmax(0, 1fr); gap: 10px; }
+.grade-agenda .campo { margin-bottom: 6px; }
+
+.subtitulo-painel { font-size: 18px; margin: 26px 0 12px; }
+.indicadores-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.mini-titulo { font-size: 13px; margin: 16px 0 6px; color: var(--muted); font-weight: 600; }
+.outros-motivos { margin: 0; padding-left: 18px; font-size: 13.5px; }
+.outros-motivos .sec { color: var(--muted); font-size: 12px; }
+
+@media (max-width: 720px) {
+  .opcoes-grade, .grade-agenda, .indicadores-3 { grid-template-columns: 1fr; }
+  .hoje-lista { grid-template-columns: 1fr; }
+  .hoje-acoes .btn { min-height: 44px; }
+}
+.cartao .etiqueta { white-space: nowrap; }
