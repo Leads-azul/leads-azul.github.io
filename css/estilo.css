@@ -613,3 +613,24 @@ tr.livre td { background: #FFFBF2; }
 .como-funciona ol { margin: 6px 0 10px 20px; padding: 0; line-height: 1.7; }
 tr.vencido td { color: var(--muted); }
 .link-convite { font-size: 13px; color: var(--blue-700); background: var(--canvas); }
+
+/* Tour de primeiro acesso */
+.tour { position: fixed; inset: 0; z-index: 1000; }
+.tour-fundo { position: fixed; inset: 0; background: transparent; }
+.tour-fundo.escuro { background: rgba(20, 33, 61, .55); }
+.tour-luz { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(20, 33, 61, .55), 0 0 0 3px #FFC23D; pointer-events: none; transition: left .25s ease, top .25s ease, width .25s ease, height .25s ease; }
+.tour-balao { position: fixed; width: min(360px, calc(100vw - 32px)); background: #fff; color: var(--ink); border-radius: 14px; padding: 18px 20px 16px; box-shadow: 0 18px 50px rgba(0, 0, 0, .28); outline: none; transition: left .25s ease, top .25s ease; }
+.tour-balao.centro { left: 50% !important; top: 50% !important; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); }
+.tour-balao h2 { margin: 0 0 6px; font-size: 18px; line-height: 1.3; }
+.tour-balao p { margin: 0 0 14px; color: #3D4A63; font-size: 14.5px; line-height: 1.55; }
+.tour-balao .tour-conta { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--blue-700); letter-spacing: .02em; }
+.tour-botoes { display: flex; justify-content: flex-end; gap: 8px; }
+.tour-sair { display: block; margin: 10px 0 0 auto; font-size: 13px; }
+@media (prefers-reduced-motion: reduce) { .tour-luz, .tour-balao { transition: none; } }
+
+/* Celular: o menu rola de lado dentro da barra, sem alargar a página */
+@media (max-width: 900px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .lateral, .principal, .nav { min-width: 0; }
+}
+.paineis > * { min-width: 0; }

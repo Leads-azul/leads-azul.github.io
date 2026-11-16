@@ -279,6 +279,7 @@
       desenhar();
       ligarTempoReal();
       if (E.boasVindas) { aviso(`Bem-vindo! Seu acesso à unidade ${E.boasVindas} já está liberado.`); E.boasVindas = null; }
+      talvezTour();
     } catch (e) {
       $app.innerHTML = `<div class="carregando"><div class="vazio"><h2>Não foi possível abrir o portal</h2><p>${esc(API.traduzir(e))}</p><button class="btn btn-primario" onclick="location.reload()">Tentar de novo</button></div></div>`;
     }
@@ -324,7 +325,7 @@
   }
   function ocupadoAgora() {
     const a = document.activeElement;
-    return $janela.open || $conf.open || (a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+    return $janela.open || $conf.open || !!document.querySelector(".tour") || (a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
   }
   async function atualizarSozinho() {
     if (ocupadoAgora()) { atualizarDepois = true; return; }
@@ -787,6 +788,7 @@
     definirDonos: () => { const s = donosSugeridos();
       seConfirmar({ titulo: `Definir o dono de ${s.length} unidade${s.length > 1 ? "s" : ""}?`, texto: s.map(x => `${esc(x.sigla)}: ${esc(x.nome)}`).join(" · ") + ". Depois dá para trocar em cada pessoa.", botao: "Definir donos" },
         () => API.definirDonos(s.map(x => ({ sigla: x.sigla, uid: x.uid, nome: x.nome }))), "Donos definidos."); },
+    tour: () => iniciarTour(),
     senha: (b) => janelaSenha(b.dataset.id),
     pedirUnidade: () => janelaPedirUnidade(),
     excluir: (b) => janelaExcluir(b.dataset.id),
@@ -2458,7 +2460,8 @@
     });
     const us = p.unidades || [];
     return `
-      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha conta</h1><p>Você mesmo pode alterar o celular. Para corrigir o nome, fale com o time de ${esc(TIME)}.</p></div></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha conta</h1><p>Você mesmo pode alterar o celular. Para corrigir o nome, fale com o time de ${esc(TIME)}.</p></div>
+        <div class="acoes"><button class="btn" data-acao="tour">Ver o tour do portal</button></div></div>
       <div class="paineis">
         <section class="bloco"><h2>Meus dados</h2>
           <dl class="dados">
@@ -2480,6 +2483,127 @@
           </form></section>
       </div>`;
   }
+
+  // ------------------------------------------------------------------
+  // Tour de primeiro acesso: um roteiro curto para cada perfil
+  // ------------------------------------------------------------------
+  const TOUR_VERSAO = "1";
+  const chaveTour = () => `portal-tour-${TOUR_VERSAO}-${E.perfil && E.perfil.id}`;
+  const tourVisto = () => { try { return !!localStorage.getItem(chaveTour()); } catch (e) { return true; } };
+  const marcarTourVisto = () => { try { localStorage.setItem(chaveTour(), new Date().toISOString()); } catch (e) { /* sem armazenamento */ } };
+  function passosTour() {
+    const nome = primeiroNome(E.perfil.nome);
+    const nav = (t) => `nav [data-tela="${t}"]`;
+    if (!ehTime()) {
+      const dono = unidadesDono().length > 0;
+      return [
+        { titulo: `Olá, ${nome}! Boas-vindas ao ${cfg.nomeDoPortal || "Portal de Leads"}`, texto: `Em menos de um minuto mostramos onde fica cada coisa. Dá para rever este tour quando quiser em Minha conta.` },
+        { tela: "leads", alvo: nav("leads"), titulo: "Meus leads", texto: "Aqui ficam os leads da sua unidade. O número amarelo mostra quantos contatos estão marcados para hoje." },
+        { tela: "leads", alvo: "section.base, .vazio [data-acao=novoPedido]", titulo: "Pedir uma base", texto: `Cada pedido traz até ${MAX} leads, com até 3 segmentos e 3 cidades. Para pedir a próxima base, tire todos os leads de Novo e Prospecção.` },
+        { tela: "leads", alvo: "section.hoje", titulo: "Para hoje", texto: "Os retornos que você marcou para hoje aparecem aqui, com WhatsApp e ligação a um clique. Se não der hoje, use Adiar." },
+        { tela: "leads", alvo: ".quadro, .tabela-wrap", titulo: "Seus leads por status", texto: "Arraste o cartão para mudar o status, ou clique nele para abrir a ficha com telefones, e-mails, próximo contato e histórico. Na ficha, marque ✓ ou ✕ em cada contato." },
+        { tela: "pedidos", alvo: nav("pedidos"), titulo: "Meus pedidos", texto: `Acompanhe cada pedido: Nova, Em extração, Enviada e Concluída. Aqui também aparece quem do ${TIME} cuida da sua unidade, com o WhatsApp.` },
+        ...(dono ? [{ tela: "equipe", alvo: nav("equipe"), titulo: "Minha equipe", texto: "Você é o dono da unidade. Convide seus vendedores por um link no WhatsApp e libere quem pedir acesso. Todos da equipe pedem e trabalham os leads." }] : []),
+        { tela: "conta", alvo: nav("conta"), titulo: "Minha conta", texto: "Altere seu celular e sua senha, peça acesso a outra unidade e reveja este tour." },
+        { titulo: "Pronto!", texto: `Qualquer dúvida, chame o time de ${TIME} pelo WhatsApp em Meus pedidos. Bom trabalho!`, fim: true }
+      ];
+    }
+    const admin = ehAdmin();
+    return [
+      { titulo: `Olá, ${nome}! Boas-vindas ao ${cfg.nomeDoPortal || "Portal de Leads"}`, texto: `Você entrou como ${admin ? "administrador" : "time de " + TIME}. Em menos de um minuto mostramos onde fica cada coisa.` },
+      { tela: "pedidos", alvo: nav("pedidos"), titulo: "Pedidos", texto: "Os pedidos de base das unidades. O número mostra os pedidos novos da sua carteira e das regiões livres." },
+      { tela: "pedidos", alvo: '[data-pilula="carteira"]', alvoGrupo: true, titulo: "Minha carteira, Livres e Todas", texto: "Minha carteira tem as regiões que são suas. Em Livres ficam as regiões sem responsável: quem puxar fica com o pedido. Pedido livre parado há mais de 1 dia útil ganha um aviso." },
+      { tela: "pedidos", alvo: "[data-acao=carteiras]", titulo: "Carteiras do time", texto: admin ? "Escolha quem cuida de cada região e quem cobre férias e ausências." : "Veja quem cuida de cada região e quem está cobrindo férias." },
+      { tela: "leads", alvo: nav("leads"), titulo: "Leads", texto: "Todos os leads enviados, com filtros por região, unidade e status. Dá para exportar para o Excel." },
+      { tela: "cadastros", alvo: nav("cadastros"), titulo: "Cadastros", texto: admin ? "Aprove cadastros, libere unidades, defina o dono de cada unidade e mude o acesso das pessoas. O número mostra quantos aguardam você." : "Consulte quem tem acesso a cada unidade e fale com a pessoa pelo WhatsApp." },
+      { tela: "painel", alvo: nav("painel"), titulo: "Painel", texto: "O retorno das unidades: leads com resposta, leads parados, motivos de Sem interesse e a agenda de cada unidade." },
+      { tela: "conta", alvo: nav("conta"), titulo: "Minha conta", texto: "Altere seu celular e sua senha e reveja este tour." },
+      { titulo: "Pronto!", texto: "As telas se atualizam sozinhas quando algo muda. Bom trabalho!", fim: true }
+    ];
+  }
+  function iniciarTour() {
+    const passos = passosTour();
+    const telaInicial = E.tela;
+    let i = 0;
+    fecharTour(true);
+    const raiz = document.createElement("div");
+    raiz.className = "tour"; raiz.setAttribute("role", "dialog"); raiz.setAttribute("aria-modal", "true"); raiz.setAttribute("aria-labelledby", "tour-titulo");
+    raiz.innerHTML = `<div class="tour-fundo"></div><div class="tour-luz" hidden></div><div class="tour-balao" tabindex="-1"></div>`;
+    document.body.appendChild(raiz);
+    const fundo = raiz.querySelector(".tour-fundo"), luz = raiz.querySelector(".tour-luz"), balao = raiz.querySelector(".tour-balao");
+    const achar = (p) => {
+      if (!p.alvo) return null;
+      const els = [...document.querySelectorAll(p.alvo)].filter(el => el.offsetParent !== null || el.getClientRects().length);
+      if (!els.length) return null;
+      if (!p.alvoGrupo) return [els[0]];
+      return els;
+    };
+    let rolou = -1;
+    const irPara = (p) => { if (p.tela && E.tela !== p.tela) { E.tela = p.tela; desenhar(); } return achar(p); };
+    const mostrar = () => {
+      let p = passos[i], alvos = irPara(p);
+      // Passo cujo alvo não existe nesta tela (ex.: unidade ainda sem leads): pula para o próximo (ou o anterior, ao voltar).
+      while (p.alvo && !alvos) {
+        const j = i + dir;
+        if (j < 0 || j >= passos.length) break;
+        i = j; p = passos[i]; alvos = irPara(p);
+      }
+      const ultimo = i === passos.length - 1;
+      balao.innerHTML = `<p class="tour-conta">${i + 1} de ${passos.length}</p><h2 id="tour-titulo">${esc(p.titulo)}</h2><p>${esc(p.texto)}</p>
+        <div class="tour-botoes">${i === 0 ? `<button type="button" class="btn" data-tour="pular">Pular o tour</button>` : `<button type="button" class="btn" data-tour="voltar">Voltar</button>`}
+        <button type="button" class="btn btn-primario" data-tour="${ultimo ? "fim" : "proximo"}">${i === 0 ? "Começar" : ultimo ? "Concluir" : "Próximo"}</button></div>
+        ${i > 0 && !ultimo ? `<button type="button" class="link-btn tour-sair" data-tour="pular">Sair do tour</button>` : ""}`;
+      balao.querySelectorAll("[data-tour]").forEach(b => b.onclick = () => acao(b.dataset.tour));
+      if (!alvos) {
+        luz.hidden = true; fundo.classList.add("escuro");
+        balao.className = "tour-balao centro";
+        balao.style.left = ""; balao.style.top = "";
+      } else {
+        fundo.classList.remove("escuro");
+        // no celular o menu rola de lado: traz o item para a vista
+        alvos.forEach(el => { const n = el.closest("nav"); if (n && n.scrollWidth > n.clientWidth) n.scrollLeft = el.offsetLeft - n.offsetLeft - (n.clientWidth - el.offsetWidth) / 2; });
+        const rs = alvos.map(el => el.getBoundingClientRect());
+        const r0 = { left: Math.min(...rs.map(r => r.left)), top: Math.min(...rs.map(r => r.top)), right: Math.max(...rs.map(r => r.right)), bottom: Math.max(...rs.map(r => r.bottom)) };
+        // traz o alvo para a tela, se precisar
+        if (rolou !== i && (r0.top < 70 || r0.top > window.innerHeight * .6)) { rolou = i; window.scrollBy(0, r0.top - 110); return requestAnimationFrame(mostrar); }
+        const m = 6, r = { left: r0.left - m, top: r0.top - m, width: Math.min(r0.right - r0.left, window.innerWidth) + 2 * m, height: Math.min(r0.bottom - r0.top, window.innerHeight * .55) + 2 * m };
+        Object.assign(luz.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" }); luz.hidden = false;
+        balao.className = "tour-balao";
+        const bw = Math.min(360, window.innerWidth - 32), bh = balao.offsetHeight || 200;
+        let x, y;
+        if (r.left + r.width + 16 + bw < window.innerWidth && r.width < window.innerWidth * .4) { x = r.left + r.width + 14; y = Math.max(16, Math.min(r.top, window.innerHeight - bh - 16)); }
+        else if (r.top + r.height + 14 + bh < window.innerHeight) { x = Math.max(16, Math.min(r.left, window.innerWidth - bw - 16)); y = r.top + r.height + 14; }
+        else { x = Math.max(16, Math.min(r.left, window.innerWidth - bw - 16)); y = Math.max(16, r.top - bh - 14); }
+        balao.style.left = x + "px"; balao.style.top = y + "px";
+      }
+      balao.querySelector(`[data-tour="${ultimo ? "fim" : "proximo"}"]`).focus();
+    };
+    let dir = 1;
+    const acao = (a) => {
+      if (a === "proximo") { dir = 1; i = Math.min(i + 1, passos.length - 1); mostrar(); }
+      else if (a === "voltar") { dir = -1; i = Math.max(i - 1, 0); mostrar(); }
+      else { marcarTourVisto(); fecharTour(); if (E.tela !== telaInicial) { E.tela = telaInicial; desenhar(); } window.scrollTo(0, 0); if (a === "fim") aviso("Tour concluído. Para ver de novo, vá em Minha conta."); }
+    };
+    raiz.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") { e.preventDefault(); acao("pular"); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); acao(i === passos.length - 1 ? "fim" : "proximo"); }
+      else if (e.key === "ArrowLeft" && i > 0) { e.preventDefault(); acao("voltar"); }
+      else if (e.key === "Tab") { const f = [...balao.querySelectorAll("button")]; const k = f.indexOf(document.activeElement); if (e.shiftKey && k <= 0) { e.preventDefault(); f[f.length - 1].focus(); } else if (!e.shiftKey && k === f.length - 1) { e.preventDefault(); f[0].focus(); } }
+    });
+    raiz._ajustar = () => mostrar();
+    window.addEventListener("resize", raiz._ajustar);
+    window.scrollTo(0, 0);
+    mostrar();
+  }
+  function fecharTour() {
+    const t = document.querySelector(".tour");
+    if (!t) return;
+    window.removeEventListener("resize", t._ajustar);
+    t.remove();
+    if (atualizarDepois) setTimeout(atualizarSozinho, 300);
+  }
+  // Primeiro acesso de cada pessoa (no modo demonstração, só pelo botão em Minha conta).
+  function talvezTour() { if ((!API.demo || /[?&]tour\b/.test(location.search)) && E.perfil && E.perfil.situacao === "aprovado" && !tourVisto() && window.innerWidth >= 360) setTimeout(iniciarTour, 600); }
 
   // Atualização automática: quando o time publica uma versão nova (index.html com outro número em <meta name="versao">),
   // a página recarrega sozinha, sem precisar de Ctrl+F5. Se tiver uma janela aberta, só avisa.
