@@ -260,6 +260,11 @@
   // ------------------------------------------------------------------
   async function iniciar() {
     if (API.demo) document.getElementById("faixa-demo").hidden = false;
+    // A atualização automática recarrega com ?v=versão (para não usar a cópia antiga); depois de carregar, o endereço volta a ser só o do portal.
+    try {
+      const q = new URLSearchParams(location.search);
+      if (q.has("v")) { q.delete("v"); const resto = q.toString(); history.replaceState(null, "", location.pathname + (resto ? "?" + resto : "") + location.hash); }
+    } catch (e) { /* ignora */ }
     // Link de convite do dono da unidade: ?convite=CODIGO
     const convite = new URLSearchParams(location.search).get("convite");
     if (convite && !E.conviteVisto) { E.conviteVisto = true; return telaConvite(convite); }
