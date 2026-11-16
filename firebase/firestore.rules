@@ -35,6 +35,20 @@ service cloud.firestore {
     function usaUnidade(sigla) {
       return aprovado() && exists(caminhoAcesso(sigla)) && get(caminhoAcesso(sigla)).data.situacao == 'aprovado';
     }
+    // Dono da unidade: o primeiro representante aprovado (o administrador pode trocar). Convida e aprova a equipe da unidade.
+    function donoDe(sigla) {
+      return sigla is string && sigla != '' && usaUnidade(sigla)
+        && get(/databases/$(database)/documents/unidades/$(sigla)).data.get('dono_uid', '') == request.auth.uid;
+    }
+    // Convite do dono (ou do administrador): vale 7 dias, uma vez, só para o e-mail convidado.
+    function caminhoConvite(codigo) { return /databases/$(database)/documents/convites/$(codigo); }
+    function conviteValido(codigo, sigla) {
+      let c = get(caminhoConvite(codigo)).data;
+      let depois = getAfter(caminhoConvite(codigo)).data;
+      return c.email == emailToken() && c.usado == false && c.sigla == sigla
+        && request.time < c.criado_em + duration.value(7, 'd')
+        && depois.usado == true && depois.usado_por == request.auth.uid;
+    }
 
     // ---------- listas ----------
     function regioes() { return ['Sudeste', 'Sul', 'Centro Oeste', 'Nordeste', 'Norte']; }
@@ -60,28 +74,38 @@ service cloud.firestore {
 
     // ---------- pessoas ----------
     match /perfis/{uid} {
-      allow read: if logado() && (request.auth.uid == uid || ehTime());
+      allow read: if logado() && (request.auth.uid == uid || ehTime() || donoDe(resource.data.get('siglaPrincipal', '')));
 
-      // Cadastro: a própria pessoa cria o perfil, sempre como representante aguardando.
+      // Cadastro: a própria pessoa cria o perfil, como representante aguardando.
+      // Quem veio pelo convite do dono da unidade já nasce aprovado (o convite é usado no mesmo envio).
       allow create: if logado() && request.auth.uid == uid && dominioOk()
-        && request.resource.data.keys().hasOnly(['nome', 'email', 'celular', 'cargo', 'papel', 'situacao', 'emailVerificado', 'siglaPrincipal', 'criadoEm'])
+        && request.resource.data.keys().hasOnly(['nome', 'email', 'celular', 'cargo', 'papel', 'situacao', 'emailVerificado', 'siglaPrincipal', 'criadoEm', 'convite'])
         && request.resource.data.email == emailToken()
         && texto(request.resource.data.nome, 120) && request.resource.data.nome.size() >= 2
         && texto(request.resource.data.celular, 30)
         && request.resource.data.papel == 'representante'
-        && request.resource.data.situacao == 'pendente'
         && request.resource.data.emailVerificado == false
-        // Representante e executivo: a sigla da unidade é o começo do e-mail. Time de Inside Sales: sem unidade.
-        && ((request.resource.data.cargo == 'Representante' && request.resource.data.siglaPrincipal == siglaDoEmail())
-          || (request.resource.data.cargo == 'Executivo' && request.resource.data.siglaPrincipal == siglaExecutivo())
-          || (request.resource.data.cargo == 'Inside Sales' && request.resource.data.siglaPrincipal == ''))
-        && request.resource.data.criadoEm == request.time;
+        && request.resource.data.criadoEm == request.time
+        && ((request.resource.data.situacao == 'pendente' && !('convite' in request.resource.data)
+          // Representante e executivo: a sigla da unidade é o começo do e-mail. Time de Inside Sales: sem unidade.
+          && ((request.resource.data.cargo == 'Representante' && request.resource.data.siglaPrincipal == siglaDoEmail())
+            || (request.resource.data.cargo == 'Executivo' && request.resource.data.siglaPrincipal == siglaExecutivo())
+            || (request.resource.data.cargo == 'Inside Sales' && request.resource.data.siglaPrincipal == '')))
+          || (request.resource.data.situacao == 'aprovado' && request.resource.data.cargo == 'Representante'
+            && request.resource.data.convite is string
+            && request.resource.data.siglaPrincipal == siglaDoEmail()
+            && conviteValido(request.resource.data.convite, request.resource.data.siglaPrincipal)));
 
       allow update: if
         // o administrador aprova, recusa, exclui (fica na aba Excluídos), muda o papel e corrige nome/celular
         (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao', 'excluido_em', 'excluido_por'])
           && request.resource.data.papel in ['representante', 'time', 'admin']
           && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado', 'excluido'])
+        // o dono da unidade aprova ou recusa quem se cadastrou na unidade dele (representante aguardando)
+        || (donoDe(resource.data.siglaPrincipal) && request.auth.uid != uid
+          && resource.data.situacao == 'pendente' && resource.data.papel == 'representante' && resource.data.cargo == 'Representante'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+          && request.resource.data.situacao in ['aprovado', 'recusado'])
         // a própria pessoa corrige o celular dela
         || (logado() && request.auth.uid == uid
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['celular'])
@@ -107,6 +131,10 @@ service cloud.firestore {
         && request.resource.data.criadaEm == request.time;
       allow update: if
         (ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome']))
+        // só o administrador escolhe o dono da unidade
+        || (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome', 'dono_uid', 'dono_nome'])
+          && (request.resource.data.get('dono_uid', null) == null || request.resource.data.dono_uid is string)
+          && textoOuNulo(request.resource.data.get('dono_nome', null), 120))
         // o representante só troca o pedido atual, e só no mesmo envio que cria o pedido novo
         || (usaUnidade(sigla)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pedidoAtual'])
@@ -128,7 +156,7 @@ service cloud.firestore {
 
     // ---------- acessos às unidades ----------
     match /acessos/{aid} {
-      allow read: if logado() && (resource.data.uid == request.auth.uid || ehTime());
+      allow read: if logado() && (resource.data.uid == request.auth.uid || ehTime() || donoDe(resource.data.sigla));
       allow create: if (logado()
           && aid == request.auth.uid + '_' + request.resource.data.sigla
           && request.resource.data.keys().hasOnly(['uid', 'sigla', 'situacao', 'principal', 'nome', 'email', 'criadoEm'])
@@ -140,9 +168,24 @@ service cloud.firestore {
           && (exists(/databases/$(database)/documents/unidades/$(request.resource.data.sigla))
             || existsAfter(/databases/$(database)/documents/unidades/$(request.resource.data.sigla)))
           && request.resource.data.criadoEm == request.time)
+        // convidado pelo dono: o acesso à unidade do convite já nasce liberado
+        || (logado()
+          && aid == request.auth.uid + '_' + request.resource.data.sigla
+          && request.resource.data.keys().hasOnly(['uid', 'sigla', 'situacao', 'principal', 'nome', 'email', 'criadoEm'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == emailToken()
+          && texto(request.resource.data.nome, 120)
+          && request.resource.data.situacao == 'aprovado' && request.resource.data.principal == true
+          && getAfter(caminhoPerfil()).data.get('convite', null) is string
+          && conviteValido(getAfter(caminhoPerfil()).data.convite, request.resource.data.sigla)
+          && request.resource.data.criadoEm == request.time)
         || ehAdmin();
       allow update: if (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
           && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'])
+        // o dono libera ou tira pessoas da unidade dele (não mexe no próprio acesso)
+        || (donoDe(resource.data.sigla) && resource.data.uid != request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+          && request.resource.data.situacao in ['aprovado', 'recusado'])
         // quem teve a unidade recusada pode pedir de novo (volta para aguardando)
         || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao == 'recusado'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
@@ -270,6 +313,34 @@ service cloud.firestore {
         && request.resource.data.regioes is map
         && request.resource.data.regioes.keys().hasOnly(regioes())
         && request.resource.data.atualizado_em == request.time;
+    }
+
+    // ---------- convites do dono da unidade ----------
+    // O código do link (20 letras e números sorteados) é a chave: quem tem o link lê o convite para preencher o cadastro.
+    match /convites/{codigo} {
+      allow get: if true;
+      allow list: if ehAdmin() || donoDe(resource.data.sigla);
+      allow create: if (ehAdmin() || donoDe(request.resource.data.sigla))
+        && codigo.size() >= 20
+        && request.resource.data.keys().hasOnly(['sigla', 'email', 'nome', 'celular', 'criado_por', 'criado_por_nome', 'criado_em', 'usado', 'usado_por', 'usado_em'])
+        && exists(/databases/$(database)/documents/unidades/$(request.resource.data.sigla))
+        && request.resource.data.email is string
+        && request.resource.data.email.matches('^[a-z0-9._%+-]+@(voeazul|azulcargo)[.]com[.]br$')
+        && request.resource.data.email.split('@')[0].split('[.]')[0].upper() == request.resource.data.sigla
+        && texto(request.resource.data.nome, 120) && request.resource.data.nome.size() >= 2
+        && textoOuNulo(request.resource.data.celular, 30)
+        && textoOuNulo(request.resource.data.criado_por_nome, 120)
+        && request.resource.data.criado_por == request.auth.uid
+        && request.resource.data.criado_em == request.time
+        && request.resource.data.usado == false && request.resource.data.usado_por == null && request.resource.data.usado_em == null;
+      // A pessoa convidada marca o convite como usado no mesmo envio do cadastro.
+      allow update: if logado() && resource.data.usado == false
+        && emailToken() == resource.data.email
+        && request.time < resource.data.criado_em + duration.value(7, 'd')
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usado', 'usado_por', 'usado_em'])
+        && request.resource.data.usado == true && request.resource.data.usado_por == request.auth.uid
+        && request.resource.data.usado_em == request.time;
+      allow delete: if resource.data.usado == false && (ehAdmin() || donoDe(resource.data.sigla));
     }
 
     // Qualquer outro caminho fica fechado.

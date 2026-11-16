@@ -602,3 +602,14 @@ tr.livre td { background: #FFFBF2; }
 .quem-cuida .txt { flex: 1 1 220px; display: flex; flex-direction: column; }
 .quem-cuida .txt small { color: var(--muted); font-size: 12.5px; }
 .quem-cuida .txt b { font-size: 15.5px; }
+
+/* Fase 3: dono da unidade, equipe e convites */
+.etiqueta.dono { background: var(--blue-50); color: var(--blue-700); border-color: transparent; font-weight: 600; }
+.faixa-donos { border-color: #F0D9A8; background: #FFFBF2; }
+.faixa-donos h2 { color: #6B4600; }
+.donos-lista { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 6px 0 14px; font-size: 13.5px; color: var(--ink-2, #3D4A63); }
+.equipe-espera { margin-bottom: 18px; border-color: #F0D9A8; }
+.equipe-espera h2 { color: #6B4600; }
+.como-funciona ol { margin: 6px 0 10px 20px; padding: 0; line-height: 1.7; }
+tr.vencido td { color: var(--muted); }
+.link-convite { font-size: 13px; color: var(--blue-700); background: var(--canvas); }

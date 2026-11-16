@@ -217,6 +217,26 @@
         await lote.commit();
         return { confirmar: false };
       },
+      // Convite do dono da unidade: qualquer pessoa com o link lê (o código sorteado é a chave).
+      async lerConvite(codigo) {
+        if (!/^[A-Za-z0-9]{20,40}$/.test(String(codigo || ""))) return null;
+        try { const s = await db.doc("convites/" + codigo).get(); return s.exists ? doc(s) : null; } catch (e) { return null; }
+      },
+      // Cadastro pelo convite: cria o login com o e-mail convidado e já entra liberado na unidade.
+      async cadastrarComConvite(codigo, senha, dados) {
+        const c = await api.lerConvite(codigo);
+        if (!c || c.usado) throw new Error("Este convite já foi usado ou não existe mais. Peça um novo para o dono da unidade.");
+        if (Date.now() - new Date(c.criado_em).getTime() > 7 * 86400000) throw new Error("Este convite venceu (vale 7 dias). Peça um novo para o dono da unidade.");
+        const atual = auth.currentUser;
+        const cred = atual && atual.email === c.email ? { user: atual } : await auth.createUserWithEmailAndPassword(c.email, senha);
+        const uid = cred.user.uid;
+        const lote = db.batch();
+        lote.set(db.doc("perfis/" + uid), { nome: dados.nome, email: c.email, celular: dados.celular, cargo: "Representante", papel: "representante", situacao: "aprovado",
+          emailVerificado: false, siglaPrincipal: c.sigla, criadoEm: TS(), convite: codigo });
+        lote.set(db.doc(`acessos/${uid}_${c.sigla}`), { uid, sigla: c.sigla, situacao: "aprovado", principal: true, nome: dados.nome, email: c.email, criadoEm: TS() });
+        lote.update(db.doc("convites/" + codigo), { usado: true, usado_por: uid, usado_em: TS() });
+        await lote.commit();
+      },
       // Administrador: tira a pessoa do portal (vai para a aba Excluídos) e fecha os acessos dela. Pedidos, leads e histórico continuam salvos.
       async excluirCadastro(uid) {
         const lote = db.batch();
@@ -287,13 +307,60 @@
       async acessos() { return (await db.collection("acessos").get()).docs.map(doc); },
       async unidades() { return (await db.collection("unidades").get()).docs.map(doc); },
       async atualizarPerfil(id, dados) { await db.doc("perfis/" + id).update(dados); },
-      async atualizarAcesso(id, situacao) { await db.doc("acessos/" + id).update({ situacao }); },
+      // dono = { uid, nome }: ao liberar, a pessoa vira dona da unidade (unidade ainda sem dono).
+      async atualizarAcesso(id, situacao, dono) {
+        const lote = db.batch();
+        lote.update(db.doc("acessos/" + id), { situacao });
+        if (dono) lote.update(db.doc("unidades/" + id.slice(id.indexOf("_") + 1)), { dono_uid: dono.uid, dono_nome: dono.nome });
+        await lote.commit();
+      },
       // Aprova a pessoa e a unidade principal dela de uma vez.
+      // Representante que é o primeiro aprovado da unidade vira o dono dela.
       async aprovarCadastro(id, papel) {
         const lote = db.batch();
         lote.update(db.doc("perfis/" + id), { situacao: "aprovado", ...(papel ? { papel } : {}) });
+        const p = (await db.doc("perfis/" + id).get()).data() || {};
         const acs = (await db.collection("acessos").where("uid", "==", id).where("principal", "==", true).get()).docs;
-        acs.forEach(a => lote.update(a.ref, { situacao: "aprovado" }));
+        for (const a of acs) {
+          lote.update(a.ref, { situacao: "aprovado" });
+          if ((p.cargo || "Representante") !== "Representante" || papel) continue;
+          const u = await db.doc("unidades/" + a.data().sigla).get();
+          if (u.exists && !u.data().dono_uid && !u.data().tipo) lote.update(u.ref, { dono_uid: id, dono_nome: p.nome || "" });
+        }
+        await lote.commit();
+      },
+      // Administrador: escolhe (ou tira, com uid null) o dono da unidade.
+      async definirDono(sigla, uid, nome) { await db.doc("unidades/" + sigla).update({ dono_uid: uid || null, dono_nome: uid ? nome : null }); },
+      async definirDonos(lista) {
+        for (let i = 0; i < lista.length; i += 400) {
+          const lote = db.batch();
+          lista.slice(i, i + 400).forEach(x => lote.update(db.doc("unidades/" + x.sigla), { dono_uid: x.uid, dono_nome: x.nome }));
+          await lote.commit();
+        }
+      },
+
+      // Dono da unidade: equipe (quem tem ou pediu acesso), convites, aprovar e tirar pessoas.
+      async equipe(sigla) {
+        const acs = (await db.collection("acessos").where("sigla", "==", sigla).get()).docs.map(doc);
+        return Promise.all(acs.map(async a => {
+          let perfil = null;
+          try { const s = await db.doc("perfis/" + a.uid).get(); perfil = s.exists ? doc(s) : null; } catch (e) { perfil = null; }
+          return { ...a, perfil };
+        }));
+      },
+      async convites(sigla) { return (await db.collection("convites").where("sigla", "==", sigla).get()).docs.map(doc); },
+      async convidar(dados) {
+        const ref = db.collection("convites").doc();
+        await ref.set({ sigla: dados.sigla, email: dados.email.trim().toLowerCase(), nome: dados.nome, celular: dados.celular || null,
+          criado_por: auth.currentUser.uid, criado_por_nome: cacheNome || null, criado_em: TS(), usado: false, usado_por: null, usado_em: null });
+        return ref.id;
+      },
+      async cancelarConvite(codigo) { await db.doc("convites/" + codigo).delete(); },
+      // Libera (ou recusa) a pessoa na unidade; quem ainda aguardava o cadastro é aprovado junto.
+      async decidirNaEquipe(uid, sigla, situacao, perfilPendente) {
+        const lote = db.batch();
+        lote.update(db.doc(`acessos/${uid}_${sigla}`), { situacao });
+        if (perfilPendente) lote.update(db.doc("perfis/" + uid), { situacao });
         await lote.commit();
       },
       async enviarRedefinicao(email) { await auth.sendPasswordResetEmail(email, continuar()); },
@@ -311,10 +378,12 @@
 
       // Avisa quando algo muda no banco (aprovação, base enviada, status), para a tela se atualizar sozinha.
       // time: pedidos, cadastros, acessos e unidades; representante: o próprio cadastro, os acessos e os pedidos das unidades.
-      observar(siglas, aoMudar) {
+      // donoDe: unidades em que a pessoa é dona (vê a equipe e os convites mudando na hora).
+      observar(siglas, aoMudar, donoDe) {
         const u = auth.currentUser; if (!u) return () => {};
         const consultas = siglas
-          ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg)), ...(siglas.length ? [db.doc("config/carteiras")] : [])]
+          ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg)), ...(siglas.length ? [db.doc("config/carteiras")] : []),
+             ...(donoDe || []).flatMap(sg => [db.collection("acessos").where("sigla", "==", sg), db.collection("convites").where("sigla", "==", sg)])]
           : [db.collection("pedidos"), db.collection("perfis"), db.collection("acessos"), db.collection("unidades"), db.doc("config/carteiras")];
         const primeira = new Set();
         const saidas = consultas.map((q, i) => q.onSnapshot({ includeMetadataChanges: false }, (snap) => {
@@ -434,19 +503,28 @@
         { id: "t2", nome: "Van Exemplo", email: "inside.van@voeazul.com.br", celular: "11900000009", cargo: "Inside Sales", papel: "time", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "", criadoEm: iso(agora - 20 * dia) },
         { id: "r1", nome: "Marina Exemplo", email: "cpq.marina@voeazul.com.br", celular: "19900000001", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "CPQ", criadoEm: iso(agora - 30 * dia) },
         { id: "r2", nome: "Paulo Modelo", email: "cwb.paulo@voeazul.com.br", celular: "41900000002", cargo: "Representante", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "CWB", criadoEm: iso(agora - 25 * dia) },
-        { id: "r3", nome: "Ana Teste", email: "rec.ana@voeazul.com.br", celular: "81900000003", papel: "representante", situacao: "pendente", emailVerificado: true, siglaPrincipal: "REC", criadoEm: iso(agora - 1 * dia) }
+        { id: "r3", nome: "Ana Teste", email: "rec.ana@voeazul.com.br", celular: "81900000003", papel: "representante", situacao: "pendente", emailVerificado: true, siglaPrincipal: "REC", criadoEm: iso(agora - 1 * dia) },
+        // Equipe da CPQ (dona: Marina): uma vendedora liberada e um vendedor aguardando a dona.
+        { id: "r4", nome: "Carla Vendedora", email: "cpq.carla@voeazul.com.br", celular: "19900000004", cargo: "Representante", papel: "representante", situacao: "aprovado", emailVerificado: false, siglaPrincipal: "CPQ", criadoEm: iso(agora - 6 * dia), convite: "DEMOusado00000000000000" },
+        { id: "r5", nome: "Bruno Vendedor", email: "cpq.bruno@voeazul.com.br", celular: "19900000005", cargo: "Representante", papel: "representante", situacao: "pendente", emailVerificado: false, siglaPrincipal: "CPQ", criadoEm: iso(agora - 0.2 * dia) }
       ],
       unidades: [
-        { id: "CPQ", sigla: "CPQ", cidade_uf: "Campinas/SP", regiao: "Sudeste", pedidoAtual: "CPQ-1" },
+        { id: "CPQ", sigla: "CPQ", cidade_uf: "Campinas/SP", regiao: "Sudeste", pedidoAtual: "CPQ-1", dono_uid: "r1", dono_nome: "Marina Exemplo" },
         { id: "VCP", sigla: "VCP", cidade_uf: "Valinhos/SP", regiao: "Sudeste", pedidoAtual: null },
-        { id: "CWB", sigla: "CWB", cidade_uf: "Curitiba/PR", regiao: "Sul", pedidoAtual: "CWB-1" },
+        { id: "CWB", sigla: "CWB", cidade_uf: "Curitiba/PR", regiao: "Sul", pedidoAtual: "CWB-1", dono_uid: "r2", dono_nome: "Paulo Modelo" },
         { id: "REC", sigla: "REC", cidade_uf: "Recife/PE", regiao: "Nordeste", pedidoAtual: null }
       ],
       acessos: [
         { id: "r1_CPQ", uid: "r1", sigla: "CPQ", situacao: "aprovado", principal: true, nome: "Marina Exemplo", email: "cpq.marina@voeazul.com.br" },
         { id: "r1_VCP", uid: "r1", sigla: "VCP", situacao: "aprovado", principal: false, nome: "Marina Exemplo", email: "cpq.marina@voeazul.com.br" },
         { id: "r2_CWB", uid: "r2", sigla: "CWB", situacao: "aprovado", principal: true, nome: "Paulo Modelo", email: "cwb.paulo@voeazul.com.br" },
-        { id: "r3_REC", uid: "r3", sigla: "REC", situacao: "pendente", principal: true, nome: "Ana Teste", email: "rec.ana@voeazul.com.br" }
+        { id: "r3_REC", uid: "r3", sigla: "REC", situacao: "pendente", principal: true, nome: "Ana Teste", email: "rec.ana@voeazul.com.br" },
+        { id: "r4_CPQ", uid: "r4", sigla: "CPQ", situacao: "aprovado", principal: true, nome: "Carla Vendedora", email: "cpq.carla@voeazul.com.br" },
+        { id: "r5_CPQ", uid: "r5", sigla: "CPQ", situacao: "pendente", principal: true, nome: "Bruno Vendedor", email: "cpq.bruno@voeazul.com.br" }
+      ],
+      convites: [
+        { id: "DEMOusado00000000000000", sigla: "CPQ", email: "cpq.carla@voeazul.com.br", nome: "Carla Vendedora", celular: "19900000004", criado_por: "r1", criado_por_nome: "Marina Exemplo", criado_em: iso(agora - 7 * dia), usado: true, usado_por: "r4", usado_em: iso(agora - 6 * dia) },
+        { id: "DEMOconvite000000000001", sigla: "CPQ", email: "cpq.diego@voeazul.com.br", nome: "Diego Vendedor", celular: "19900000006", criado_por: "r1", criado_por_nome: "Marina Exemplo", criado_em: iso(agora - 1 * dia), usado: false, usado_por: null, usado_em: null }
       ],
       pedidos: [], historico: [],
       // Carteiras de exemplo: Sudeste com o administrador, Sul e Centro Oeste com a Van, Norte e Nordeste livres.
@@ -491,6 +569,7 @@
     const ehTime = () => eu() && ["time", "admin"].includes(eu().papel) && eu().situacao === "aprovado";
     const ehAdmin = () => ehTime() && eu().papel === "admin";
     const usa = (sigla) => ehTime() || db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla && a.situacao === "aprovado");
+    const donoDe = (sigla) => !!eu() && eu().situacao === "aprovado" && db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla && a.situacao === "aprovado") && (db.unidades.find(u => u.sigla === sigla) || {}).dono_uid === usuario.id;
     const negar = () => { const e = new Error("Você não tem permissão para esta ação."); e.code = "permission-denied"; throw e; };
     const pedidoLiberado = (id) => { const p = db.pedidos.find(x => x.id === id); return !p || ["Concluída", "Sem leads", "Cancelada"].includes(p.situacao) || (p.situacao === "Enviada" && p.liberada); };
     const reg = (pid, k, tipo, texto) => db.historico.push({ id: "h" + seq++, pedido: pid, lead: k, tipo, texto, autor: usuario.id, autor_nome: eu().nome, criado_em: new Date().toISOString(), editado_em: null });
@@ -524,6 +603,19 @@
         usuario = { id, email };
         return { confirmar: false };
       },
+      async lerConvite(codigo) { const c = db.convites.find(x => x.id === codigo); return c ? copia(c) : null; },
+      async cadastrarComConvite(codigo, senha, dados) {
+        await espera();
+        const c = db.convites.find(x => x.id === codigo);
+        if (!c || c.usado) throw new Error("Este convite já foi usado ou não existe mais. Peça um novo para o dono da unidade.");
+        if (Date.now() - new Date(c.criado_em).getTime() > 7 * dia) throw new Error("Este convite venceu (vale 7 dias). Peça um novo para o dono da unidade.");
+        if (db.perfis.some(p => p.email === c.email)) { const e = new Error(); e.code = "auth/email-already-in-use"; throw e; }
+        const id = "u" + Math.random().toString(36).slice(2, 8);
+        db.perfis.push({ id, nome: dados.nome, email: c.email, celular: dados.celular, cargo: "Representante", papel: "representante", situacao: "aprovado", emailVerificado: false, siglaPrincipal: c.sigla, criadoEm: new Date().toISOString(), convite: codigo });
+        db.acessos.push({ id: `${id}_${c.sigla}`, uid: id, sigla: c.sigla, situacao: "aprovado", principal: true, nome: dados.nome, email: c.email });
+        Object.assign(c, { usado: true, usado_por: id, usado_em: new Date().toISOString() });
+        usuario = { id, email: c.email };
+      },
       async reenviarConfirmacao() { await espera(); },
       async conferirConfirmacao() { return !!(eu() && eu().emailVerificado); },
       async simularConfirmacao() { eu().emailVerificado = true; },
@@ -548,11 +640,43 @@
       async acessos() { if (!ehTime()) negar(); return copia(db.acessos); },
       async unidades() { return copia(db.unidades); },
       async atualizarPerfil(id, dados) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), dados); },
-      async atualizarAcesso(id, situacao) { if (!ehAdmin()) negar(); db.acessos.find(a => a.id === id).situacao = situacao; },
+      async atualizarAcesso(id, situacao, dono) {
+        if (!ehAdmin()) negar(); const a = db.acessos.find(x => x.id === id); a.situacao = situacao;
+        if (dono) Object.assign(db.unidades.find(u => u.sigla === a.sigla), { dono_uid: dono.uid, dono_nome: dono.nome });
+      },
+      async definirDono(sigla, uid, nome) { if (!ehAdmin()) negar(); Object.assign(db.unidades.find(u => u.sigla === sigla), { dono_uid: uid || null, dono_nome: uid ? nome : null }); },
+      async definirDonos(lista) { if (!ehAdmin()) negar(); lista.forEach(x => Object.assign(db.unidades.find(u => u.sigla === x.sigla), { dono_uid: x.uid, dono_nome: x.nome })); },
+      async equipe(sigla) {
+        if (!ehTime() && !donoDe(sigla)) negar();
+        return copia(db.acessos.filter(a => a.sigla === sigla).map(a => { const p = db.perfis.find(x => x.id === a.uid); return { ...a, perfil: p && (ehTime() || p.siglaPrincipal === sigla) ? p : null }; }));
+      },
+      async convites(sigla) { if (!ehAdmin() && !donoDe(sigla)) negar(); return copia(db.convites.filter(c => c.sigla === sigla)); },
+      async convidar(dados) {
+        await espera(); if (!ehAdmin() && !donoDe(dados.sigla)) negar();
+        const email = dados.email.trim().toLowerCase();
+        if (siglaDoEmail(email) !== dados.sigla || !DOMINIOS.includes(email.split("@")[1])) negar();
+        const id = "DEMO" + Math.random().toString(36).slice(2, 12) + Date.now().toString(36);
+        db.convites.push({ id, sigla: dados.sigla, email, nome: dados.nome, celular: dados.celular || null, criado_por: usuario.id, criado_por_nome: eu().nome, criado_em: new Date().toISOString(), usado: false, usado_por: null, usado_em: null });
+        return id;
+      },
+      async cancelarConvite(codigo) { const c = db.convites.find(x => x.id === codigo); if (!c || c.usado || (!ehAdmin() && !donoDe(c.sigla))) negar(); db.convites.splice(db.convites.indexOf(c), 1); },
+      async decidirNaEquipe(uid, sigla, situacao, perfilPendente) {
+        await espera(); if (!donoDe(sigla) || uid === usuario.id) negar();
+        db.acessos.find(a => a.uid === uid && a.sigla === sigla).situacao = situacao;
+        if (perfilPendente) { const p = db.perfis.find(x => x.id === uid); if (p.situacao !== "pendente" || p.siglaPrincipal !== sigla) negar(); p.situacao = situacao; }
+      },
       async excluirCadastro(id) { if (!ehAdmin() || id === usuario.id) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "excluido", excluido_em: new Date().toISOString(), excluido_por: eu().nome }); db.acessos.filter(a => a.uid === id).forEach(a => a.situacao = "recusado"); },
       async excluirDeVez(id) { if (!ehAdmin() || id === usuario.id) negar(); db.perfis = db.perfis.filter(p => p.id !== id); db.acessos = db.acessos.filter(a => a.uid !== id); },
       async reativarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "pendente"; },
-      async aprovarCadastro(id, papel) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "aprovado", ...(papel ? { papel } : {}) }); db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
+      async aprovarCadastro(id, papel) {
+        if (!ehAdmin()) negar(); const p = db.perfis.find(x => x.id === id);
+        Object.assign(p, { situacao: "aprovado", ...(papel ? { papel } : {}) });
+        db.acessos.filter(a => a.uid === id && a.principal).forEach(a => {
+          a.situacao = "aprovado";
+          const u = db.unidades.find(x => x.sigla === a.sigla);
+          if (u && !u.dono_uid && !u.tipo && !papel && (p.cargo || "Representante") === "Representante") Object.assign(u, { dono_uid: id, dono_nome: p.nome });
+        });
+      },
       async enviarRedefinicao() { if (!ehTime()) negar(); await espera(); },
       observar() { return () => {}; },
       async pedidos(siglas) {

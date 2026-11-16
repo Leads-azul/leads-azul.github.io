@@ -249,6 +249,9 @@
   // Executivo não tem loja: usa uma "carteira" própria (unidade com nome).
   function infoUnidade(sigla) { return (E.perfil && E.perfil.unidades || []).find(u => u.sigla === sigla) || E.unidades.find(u => u.sigla === sigla) || { sigla }; }
   const rotulo = (sigla) => infoUnidade(sigla).nome || sigla;
+  // Dono da unidade: convida e libera a equipe (vendedores) da unidade.
+  const unidadesDono = () => E.perfil && !ehTime() ? minhasUnidades().filter(u => u.dono_uid === E.perfil.id) : [];
+  const pendentesEquipe = () => Object.values(E.equipe || {}).reduce((n, q) => n + q.pessoas.filter(p => p.situacao === "pendente" && p.uid !== E.perfil.id).length, 0);
   const rotuloLongo = (sigla) => infoUnidade(sigla).nome || "Unidade " + sigla;
   function escolherUnidade(sigla) { E.u = sigla; try { localStorage.setItem("portal-unidade", sigla); } catch (e) { /* sem armazenamento */ } }
 
@@ -257,6 +260,9 @@
   // ------------------------------------------------------------------
   async function iniciar() {
     if (API.demo) document.getElementById("faixa-demo").hidden = false;
+    // Link de convite do dono da unidade: ?convite=CODIGO
+    const convite = new URLSearchParams(location.search).get("convite");
+    if (convite && !E.conviteVisto) { E.conviteVisto = true; return telaConvite(convite); }
     try {
       const u = await API.sessao();
       if (!u) return telaAcesso("entrar");
@@ -272,6 +278,7 @@
       await carregar();
       desenhar();
       ligarTempoReal();
+      if (E.boasVindas) { aviso(`Bem-vindo! Seu acesso à unidade ${E.boasVindas} já está liberado.`); E.boasVindas = null; }
     } catch (e) {
       $app.innerHTML = `<div class="carregando"><div class="vazio"><h2>Não foi possível abrir o portal</h2><p>${esc(API.traduzir(e))}</p><button class="btn btn-primario" onclick="location.reload()">Tentar de novo</button></div></div>`;
     }
@@ -287,6 +294,13 @@
       if (p) E.perfil = p;
       if (!minhasUnidades().some(u => u.sigla === E.u)) E.u = (minhasUnidades()[0] || {}).sigla;
       E.pedidos = await API.pedidos(minhasUnidades().map(u => u.sigla));
+      // Dono da unidade: equipe e convites de cada unidade dele.
+      const equipe = {};
+      await Promise.all(unidadesDono().map(async u => {
+        try { const [pessoas, convites] = await Promise.all([API.equipe(u.sigla), API.convites(u.sigla)]); equipe[u.sigla] = { pessoas, convites }; }
+        catch (e) { equipe[u.sigla] = { pessoas: [], convites: [], erro: API.traduzir(e) }; }
+      }));
+      E.equipe = equipe;
     }
     E.carteiras = await API.carteiras();
     // Cidades gravadas antes da padronização aparecem certas na tela ("oSASCO/sP" -> "Osasco/SP").
@@ -301,11 +315,12 @@
   function ligarTempoReal() {
     if (!E.perfil || E.perfil.situacao !== "aprovado") return;
     const siglas = ehTime() ? null : minhasUnidades().map(u => u.sigla);
-    const chave = siglas ? siglas.join(",") : "time";
+    const donas = ehTime() ? [] : unidadesDono().map(u => u.sigla);
+    const chave = siglas ? siglas.join(",") + "|" + donas.join(",") : "time";
     if (pararObservar && chave === chaveObservar) return;
     if (pararObservar) pararObservar();
     chaveObservar = chave;
-    pararObservar = API.observar(siglas, () => { clearTimeout(timerTempoReal); timerTempoReal = setTimeout(atualizarSozinho, 700); });
+    pararObservar = API.observar(siglas, () => { clearTimeout(timerTempoReal); timerTempoReal = setTimeout(atualizarSozinho, 700); }, donas);
   }
   function ocupadoAgora() {
     const a = document.activeElement;
@@ -325,6 +340,24 @@
   // ------------------------------------------------------------------
   // Acesso: entrar e criar cadastro
   // ------------------------------------------------------------------
+  // Lado esquerdo das telas de entrada (entrar, criar acesso e convite).
+  const ladoAcesso = () => `
+        <section class="acesso-lado">
+          ${ROTA}
+          <div class="marca-topo">${cfg.logoUrl ? `${logo()}<span class="sep-v"></span><span>${esc(TIME)}</span>` : `<span>${esc(TIME)} <span class="sep">|</span> ${esc(EMPRESA)}</span>`}</div>
+          <div>
+            <p class="sobrelinha">Nova plataforma de leads Leads2b</p>
+            <h1>${esc(cfg.nomeDoPortal || "Portal de Leads")}</h1>
+            <p>Peça bases de leads para a sua unidade e registre o retorno de cada contato em um só lugar.</p>
+          </div>
+          <ol class="passos">
+            <li><span class="n">1</span><span><b>Crie seu acesso</b>Com o seu e-mail Azul. Representantes usam o e-mail com a sigla da unidade.</span></li>
+            <li><span class="n">2</span><span><b>Peça uma base</b>Até 3 segmentos e 3 cidades. São ${MAX} leads por pedido.</span></li>
+            <li><span class="n">3</span><span><b>Trabalhe os contatos</b>Tire os leads de Novo e Prospecção para liberar a próxima base.</span></li>
+          </ol>
+          <p class="rodape-lado">Ferramenta interna do time de ${esc(TIME)}. Este portal tem login próprio e não usa a senha da sua conta Azul.</p>
+        </section>`;
+
   function telaAcesso(modo, erro, refazer) {
     const dominios = cfg.dominiosPermitidos || ["voeazul.com.br", "azulcargo.com.br"];
     const formEntrar = `
@@ -378,21 +411,7 @@
 
     $app.innerHTML = `
       <div class="acesso">
-        <section class="acesso-lado">
-          ${ROTA}
-          <div class="marca-topo">${cfg.logoUrl ? `${logo()}<span class="sep-v"></span><span>${esc(TIME)}</span>` : `<span>${esc(TIME)} <span class="sep">|</span> ${esc(EMPRESA)}</span>`}</div>
-          <div>
-            <p class="sobrelinha">Nova plataforma de leads Leads2b</p>
-            <h1>${esc(cfg.nomeDoPortal || "Portal de Leads")}</h1>
-            <p>Peça bases de leads para a sua unidade e registre o retorno de cada contato em um só lugar.</p>
-          </div>
-          <ol class="passos">
-            <li><span class="n">1</span><span><b>Crie seu acesso</b>Com o seu e-mail Azul. Representantes usam o e-mail com a sigla da unidade.</span></li>
-            <li><span class="n">2</span><span><b>Peça uma base</b>Até 3 segmentos e 3 cidades. São ${MAX} leads por pedido.</span></li>
-            <li><span class="n">3</span><span><b>Trabalhe os contatos</b>Tire os leads de Novo e Prospecção para liberar a próxima base.</span></li>
-          </ol>
-          <p class="rodape-lado">Ferramenta interna do time de ${esc(TIME)}. Este portal tem login próprio e não usa a senha da sua conta Azul.</p>
-        </section>
+        ${ladoAcesso()}
         <section class="acesso-form"><div class="acesso-caixa">${modo === "cadastro" ? formCadastro : formEntrar}${atalhos}</div></section>
       </div>`;
 
@@ -508,11 +527,75 @@
     document.getElementById("b-sair").onclick = sair;
   }
 
+  // Convite do dono da unidade: a pessoa cria a senha e já entra liberada na unidade.
+  const VALIDADE_CONVITE = 7;
+  const conviteVencido = (c) => Date.now() - new Date(c.criado_em).getTime() > VALIDADE_CONVITE * DIA;
+  const linkConvite = (codigo) => urlPortal() + "?convite=" + encodeURIComponent(codigo);
+  const tirarConviteDaUrl = () => { try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignora */ } };
+  async function telaConvite(codigo) {
+    $app.innerHTML = `<div class="carregando"><p class="sub">Abrindo o convite…</p></div>`;
+    const c = await API.lerConvite(codigo);
+    const sessao = await API.sessao().catch(() => null);
+    const caixa = (html) => { $app.innerHTML = `<div class="acesso">${ladoAcesso()}<section class="acesso-form"><div class="acesso-caixa">${html}</div></section></div>`; };
+    const irEntrar = () => { tirarConviteDaUrl(); E.tela = null; iniciar(); };
+    const aviso1 = (titulo, texto) => {
+      caixa(`<h2>${titulo}</h2><p class="sub">${texto}</p><button class="btn btn-primario btn-largo" id="v-entrar">Ir para a entrada do portal</button>`);
+      document.getElementById("v-entrar").onclick = async () => { if (sessao) await sair(); irEntrar(); };
+    };
+    if (!c) return aviso1("Convite não encontrado", "O link pode ter sido cancelado ou copiado pela metade. Peça um novo link para o dono da sua unidade.");
+    if (c.usado) return aviso1("Este convite já foi usado", `O acesso de <b>${esc(c.email)}</b> já foi criado. Entre com esse e-mail e a senha que você escolheu.`);
+    if (conviteVencido(c)) return aviso1("Este convite venceu", `O link vale ${VALIDADE_CONVITE} dias. Peça um novo para ${esc(c.criado_por_nome || "o dono da unidade")}.`);
+    if (sessao && sessao.email !== c.email) {
+      caixa(`<h2>Você está conectado com outro e-mail</h2><p class="sub">Este convite é para <b>${esc(c.email)}</b>, mas o portal está aberto como <b>${esc(sessao.email)}</b>.</p>
+        <button class="btn btn-primario btn-largo" id="v-trocar">Sair e continuar o convite</button>`);
+      document.getElementById("v-trocar").onclick = async () => { await API.sair(); E.perfil = null; telaConvite(codigo); };
+      return;
+    }
+    caixa(`
+      <p class="selo selo-ok" style="margin:0 0 10px">Convite da unidade ${esc(c.sigla)}</p>
+      <h2>Criar meu acesso</h2>
+      <p class="sub"><b>${esc(c.criado_por_nome || "O dono da unidade")}</b> convidou você para a equipe da unidade <b>${esc(c.sigla)}</b>. Crie sua senha e você já entra liberado, sem esperar aprovação.</p>
+      <form id="f-convite" novalidate>
+        <div class="campo"><label for="v-nome">Nome completo</label><input id="v-nome" type="text" autocomplete="name" required value="${esc(c.nome)}"></div>
+        <div class="campo"><label for="v-email">E-mail Azul</label><input id="v-email" type="email" value="${esc(c.email)}" readonly aria-readonly="true"><span class="dica">É o e-mail do convite e vira o seu login.</span></div>
+        <div class="campo"><label for="v-cel">Celular com DDD</label><input id="v-cel" type="tel" autocomplete="tel" required value="${esc(foneBonito(c.celular || ""))}" placeholder="(11) 90000-0000"></div>
+        <div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>
+        <div class="grade-2">
+          <div class="campo"><label for="v-senha">Senha</label><input id="v-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres</span></div>
+          <div class="campo"><label for="v-senha2">Repita a senha</label><input id="v-senha2" type="password" autocomplete="new-password" required></div>
+        </div>
+        <div class="erro-form" id="v-erro" hidden></div>
+        <button class="btn btn-primario btn-largo" type="submit">Criar acesso e entrar</button>
+      </form>
+      <p class="sub" style="margin-top:18px">Já tem acesso? <button class="link-btn" id="v-ja">Entrar</button></p>`);
+    document.getElementById("v-ja").onclick = irEntrar;
+    const f = document.getElementById("f-convite");
+    f.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const v = (id) => document.getElementById(id).value.trim();
+      const erroEl = document.getElementById("v-erro");
+      const mostrar = (m) => { erroEl.textContent = m; erroEl.hidden = false; };
+      const cel = celularLimpo(v("v-cel"));
+      if (v("v-nome").length < 2) return mostrar("Digite seu nome completo.");
+      if (!cel) return mostrar("Informe o celular com DDD, por exemplo (11) 91234-5678.");
+      if (v("v-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
+      if (v("v-senha") !== v("v-senha2")) return mostrar("As senhas não são iguais.");
+      try {
+        await ocupado(f.querySelector("button[type=submit]"), () => API.cadastrarComConvite(codigo, v("v-senha"), { nome: v("v-nome"), celular: cel }));
+        tirarConviteDaUrl(); E.tela = null; E.boasVindas = c.sigla; iniciar();
+      } catch (e) {
+        mostrar(e && e.code === "auth/email-already-in-use" ? `O e-mail ${c.email} já tem acesso ao portal. Clique em Entrar e use a sua senha.` : API.traduzir(e));
+      }
+    });
+  }
+
   function telaEspera() {
     const p = E.perfil;
     const recusado = ["recusado", "excluido"].includes(p.situacao);
     const faltaAcesso = p.situacao === "aprovado"; // aprovado, mas sem unidade liberada ou sem acesso de time
     const unid = (p.unidades || []).map(u => u.nome ? "da sua carteira" : "da unidade " + u.sigla).join(", ");
+    const principal = (p.unidades || []).find(u => u.principal) || {};
+    const dono = principal.dono_uid && principal.dono_uid !== p.id ? principal.dono_nome : "";
     $app.innerHTML = `
       <div class="carregando"><div class="vazio" style="max-width:520px">
         ${!recusado && E.cadastroNovo ? `<p class="selo selo-ok" style="margin:0 auto 10px">Cadastro realizado</p>` : ""}
@@ -520,6 +603,7 @@
         <p>${recusado
           ? `Fale com o time de ${esc(TIME)} para revisar o seu cadastro.`
           : faltaAcesso ? `Seu cadastro foi aprovado, mas o time de ${esc(TIME)} ainda precisa liberar ${p.cargo === "Inside Sales" ? "o seu acesso de time" : "a sua unidade"}. Assim que liberar, clique em “Já fui aprovado”.`
+          : dono ? `${esc(dono)}, dono da unidade ${esc(principal.sigla)}, ou o time de ${esc(TIME)} vai conferir seus dados e liberar o acesso. Assim que liberarem, o portal abre sozinho.`
           : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Você recebe um aviso pelo WhatsApp quando estiver pronto.`}</p>
         <div class="acoes" style="justify-content:center">
           <button class="btn" id="b-atualizar">Já fui aprovado</button>
@@ -575,12 +659,13 @@
     const novos = E.pedidos.filter(p => p.situacao === "Nova" && (meuPedido(p) || pedidoLivre(p))).length;
     const itens = time
       ? [["pedidos", "Pedidos", novos], ["leads", "Leads"], ["cadastros", "Cadastros", pendentes], ["painel", "Painel"], ["conta", "Minha conta"]]
-      : [["leads", "Meus leads", E.leads.filter(paraHoje).length], ["pedidos", "Meus pedidos"], ["conta", "Minha conta"]];
+      : [["leads", "Meus leads", E.leads.filter(paraHoje).length], ["pedidos", "Meus pedidos"], ...(unidadesDono().length ? [["equipe", "Minha equipe", pendentesEquipe()]] : []), ["conta", "Minha conta"]];
 
     const conteudo = {
       leads: time ? telaLeadsTime : telaLeadsRep,
       pedidos: time ? telaPedidosTime : telaPedidosRep,
       cadastros: telaCadastros,
+      equipe: time ? (() => "") : telaEquipe,
       painel: telaPainel,
       conta: telaConta
     }[E.tela] || (() => "");
@@ -594,7 +679,7 @@
             ${itens.map(([id, nome, c]) => `<button data-tela="${id}"${E.tela === id ? ' aria-current="page"' : ""}><span>${nome}</span>${c ? `<span class="contador">${c}</span>` : ""}</button>`).join("")}
           </nav>
           <div class="quem">
-            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? (ehAdmin() ? "Administrador · " : "Time de ") + esc(TIME) : `${E.perfil.cargo === "Executivo" ? "Executivo · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
+            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? (ehAdmin() ? "Administrador · " : "Time de ") + esc(TIME) : `${E.perfil.cargo === "Executivo" ? "Executivo · " : unidadesDono().length ? "Dono · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
@@ -660,7 +745,9 @@
     irPedidos: () => { E.tela = "pedidos"; desenhar(); },
     irLeads: () => { E.tela = "leads"; desenhar(); },
     aprovar: (b) => seConfirmar({ titulo: `Aprovar ${perfilDe(b.dataset.id).nome || "este cadastro"}${b.dataset.papel === "admin" ? " como administrador" : b.dataset.papel === "time" ? " como time" : ""}?`,
-        texto: b.dataset.papel === "admin" ? "A pessoa passa a ver tudo e a aprovar cadastros, mudar acessos e excluir." : b.dataset.papel === "time" ? "A pessoa passa a ver e trabalhar todos os pedidos e leads." : "A pessoa passa a usar o portal na unidade dela.", botao: "Aprovar" },
+        texto: b.dataset.papel === "admin" ? "A pessoa passa a ver tudo e a aprovar cadastros, mudar acessos e excluir." : b.dataset.papel === "time" ? "A pessoa passa a ver e trabalhar todos os pedidos e leads."
+          : (() => { const p = perfilDe(b.dataset.id), u = E.unidades.find(x => x.sigla === p.siglaPrincipal) || {};
+            return "A pessoa passa a usar o portal na unidade dela." + ((p.cargo || "Representante") === "Representante" && u.sigla && !u.dono_uid && !u.tipo ? ` Como é o primeiro cadastro aprovado da unidade ${esc(u.sigla)}, vira dono dela: convida e libera a equipe.` : u.dono_nome ? ` A unidade ${esc(u.sigla)} já tem dono: ${esc(u.dono_nome)}.` : ""); })(), botao: "Aprovar" },
       () => API.aprovarCadastro(b.dataset.id, b.dataset.papel), b.dataset.papel === "admin" ? "Aprovado como administrador." : b.dataset.papel === "time" ? "Aprovado como time." : "Cadastro aprovado."),
     editarPessoa: (b) => janelaEditarPessoa(b.dataset.id),
     meuCelular: () => janelaCelular(),
@@ -674,12 +761,32 @@
     },
     reativar: (b) => seConfirmar({ titulo: `Reativar ${perfilDe(b.dataset.id).nome || "este cadastro"}?`, texto: "O cadastro volta para Aguardando. Depois é só aprovar.", botao: "Reativar" },
       () => API.reativarCadastro(b.dataset.id), "Cadastro reativado. Ele está em Aguardando para aprovar."),
-    aprovarUnidade: (b) => seConfirmar({ titulo: `Liberar a unidade ${acessoDe(b.dataset.id).sigla || ""}?`, texto: `${esc(acessoDe(b.dataset.id).nome || "A pessoa")} passa a pedir e trabalhar leads dessa unidade.`, botao: "Liberar" },
-      () => API.atualizarAcesso(b.dataset.id, "aprovado"), "Unidade liberada."),
+    aprovarUnidade: (b) => { const a = acessoDe(b.dataset.id), p = perfilDe(a.uid), u = E.unidades.find(x => x.sigla === a.sigla) || {};
+      const dono = !u.dono_uid && !u.tipo && (p.papel || "representante") === "representante" && (p.cargo || "Representante") === "Representante" ? { uid: a.uid, nome: p.nome || a.nome } : null;
+      seConfirmar({ titulo: `Liberar a unidade ${a.sigla || ""}?`, texto: `${esc(a.nome || "A pessoa")} passa a pedir e trabalhar leads dessa unidade.${dono ? " Como a unidade ainda não tem dono, a pessoa vira dono dela." : ""}`, botao: "Liberar" },
+        () => API.atualizarAcesso(b.dataset.id, "aprovado", dono), "Unidade liberada."); },
     recusarUnidade: (b) => seConfirmar({ titulo: `Recusar a unidade ${acessoDe(b.dataset.id).sigla || ""}?`, texto: "A pessoa poderá pedir de novo, se for o caso.", botao: "Recusar", perigo: true },
       () => API.atualizarAcesso(b.dataset.id, "recusado"), "Unidade recusada."),
     pedirDeNovo: (b) => seConfirmar({ titulo: `Pedir de novo a unidade ${b.dataset.sigla}?`, texto: `O pedido volta para o time de ${esc(TIME)} conferir.`, botao: "Pedir de novo" },
       async () => { await API.pedirDeNovo(b.dataset.sigla); }, "Pedido enviado de novo ao time."),
+    // Dono da unidade
+    convidar: (b) => janelaConvidar(b.dataset.sigla, b.dataset.trocar ? { nome: b.dataset.nome, email: b.dataset.email, cel: b.dataset.cel, trocar: b.dataset.trocar } : null),
+    liberarEquipe: (b) => { const p = pessoaEquipe(b); seConfirmar({ titulo: `Liberar ${p.nome || "esta pessoa"} na unidade ${b.dataset.sigla}?`, texto: "A pessoa passa a pedir e trabalhar os leads da unidade.", botao: "Liberar" },
+      () => API.decidirNaEquipe(b.dataset.id, b.dataset.sigla, "aprovado", !!b.dataset.perfil), `${primeiroNome(p.nome)} está liberado na unidade.`); },
+    recusarEquipe: (b) => { const p = pessoaEquipe(b); seConfirmar({ titulo: `Recusar ${p.nome || "esta pessoa"}?`, texto: `A pessoa não entra na unidade ${esc(b.dataset.sigla)}. Se for engano, o time de ${esc(TIME)} consegue reativar.`, botao: "Recusar", perigo: true },
+      () => API.decidirNaEquipe(b.dataset.id, b.dataset.sigla, "recusado", !!b.dataset.perfil), "Pedido recusado."); },
+    tirarEquipe: (b) => { const p = pessoaEquipe(b); seConfirmar({ titulo: `Tirar ${p.nome || "esta pessoa"} da unidade ${b.dataset.sigla}?`, texto: "A pessoa para de ver os pedidos e leads da unidade. Os leads e o histórico continuam salvos, e dá para liberar de novo depois.", botao: "Tirar da unidade", perigo: true },
+      () => API.decidirNaEquipe(b.dataset.id, b.dataset.sigla, "recusado", false), "Pessoa tirada da unidade."); },
+    copiarConvite: async (b) => { const c = conviteDe(b.dataset.id); aviso(await copiar(msgConvite(c)) ? "Mensagem com o link copiada. É só colar no WhatsApp." : "Não deu para copiar. Tente de novo.", false); },
+    cancelarConvite: (b) => { const c = conviteDe(b.dataset.id); seConfirmar({ titulo: `Cancelar o convite de ${c.nome}?`, texto: "O link para de funcionar. Dá para mandar outro depois.", botao: "Cancelar convite", perigo: true },
+      () => API.cancelarConvite(c.id), "Convite cancelado."); },
+    // Administrador: dono da unidade
+    tornarDono: (b) => { const p = perfilDe(b.dataset.id), u = E.unidades.find(x => x.sigla === b.dataset.sigla) || {};
+      seConfirmar({ titulo: `Tornar ${p.nome} dono da unidade ${b.dataset.sigla}?`, texto: `${u.dono_nome ? `Hoje o dono é ${esc(u.dono_nome)}. ` : ""}O dono convida e libera a equipe da unidade.`, botao: "Tornar dono" },
+        () => API.definirDono(b.dataset.sigla, p.id, p.nome), `${primeiroNome(p.nome)} agora é dono da unidade ${b.dataset.sigla}.`); },
+    definirDonos: () => { const s = donosSugeridos();
+      seConfirmar({ titulo: `Definir o dono de ${s.length} unidade${s.length > 1 ? "s" : ""}?`, texto: s.map(x => `${esc(x.sigla)}: ${esc(x.nome)}`).join(" · ") + ". Depois dá para trocar em cada pessoa.", botao: "Definir donos" },
+        () => API.definirDonos(s.map(x => ({ sigla: x.sigla, uid: x.uid, nome: x.nome }))), "Donos definidos."); },
     senha: (b) => janelaSenha(b.dataset.id),
     pedirUnidade: () => janelaPedirUnidade(),
     excluir: (b) => janelaExcluir(b.dataset.id),
@@ -690,6 +797,17 @@
   }
   async function seConfirmar(opcoes, fn, msg) { if (await confirmar(opcoes)) await mudar(fn, msg); }
   const acessoDe = (id) => (E.acessos || []).find(a => a.id === id) || {};
+  const pessoaEquipe = (b) => (((E.equipe || {})[b.dataset.sigla] || { pessoas: [] }).pessoas.find(p => p.uid === b.dataset.id)) || {};
+  const conviteDe = (id) => Object.values(E.equipe || {}).flatMap(q => q.convites).find(c => c.id === id) || {};
+  // Unidades sem dono: sugere o primeiro representante aprovado de cada uma.
+  function donosSugeridos() {
+    return E.unidades.filter(u => !u.tipo && !u.dono_uid).map(u => {
+      const cands = E.acessos.filter(a => a.sigla === u.sigla && a.situacao === "aprovado").map(a => ({ a, p: perfilDe(a.uid) }))
+        .filter(({ p }) => p.situacao === "aprovado" && (p.papel || "representante") === "representante" && (p.cargo || "Representante") === "Representante")
+        .sort((x, y) => (y.a.principal - x.a.principal) || String(x.a.criadoEm || x.p.criadoEm || "").localeCompare(String(y.a.criadoEm || y.p.criadoEm || "")));
+      return cands.length ? { sigla: u.sigla, uid: cands[0].p.id, nome: cands[0].p.nome } : null;
+    }).filter(Boolean);
+  }
 
   // ------------------------------------------------------------------
   // Leads: filtros, Kanban e lista
@@ -1415,6 +1533,129 @@
       ${link ? `<a class="btn btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}</div>`;
   }
 
+  // ------------------------------------------------------------------
+  // Dono da unidade: equipe, convites e aprovação
+  // ------------------------------------------------------------------
+  const unidadeEquipe = () => { const d = unidadesDono(); return d.find(x => x.sigla === E.u) || d[0] || null; };
+  const msgConvite = (c) => `Olá, ${primeiroNome(c.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, da unidade ${c.sigla}. Criei seu acesso ao ${cfg.nomeDoPortal || "Portal de Leads"} da ${EMPRESA}. Abra o link, crie uma senha só para o portal e você já entra liberado: ${linkConvite(c.id)}\n\nO link vale ${VALIDADE_CONVITE} dias e funciona só com o e-mail ${c.email}.`;
+  const validoAte = (c) => { const d = new Date(new Date(c.criado_em).getTime() + VALIDADE_CONVITE * DIA); return d.toLocaleDateString("pt-BR"); };
+  async function copiar(texto) {
+    try { await navigator.clipboard.writeText(texto); return true; }
+    catch (e) {
+      const t = document.createElement("textarea"); t.value = texto; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+      ($janela.open ? $janela : document.body).appendChild(t); t.select();
+      let ok = false; try { ok = document.execCommand("copy"); } catch (x) { ok = false; }
+      t.remove(); return ok;
+    }
+  }
+
+  function telaEquipe() {
+    const u = unidadeEquipe();
+    if (!u) return `<div class="vazio"><h2>Você não é dono de nenhuma unidade</h2><p>Quem cuida da equipe é o dono da unidade. Fale com o time de ${esc(TIME)} se precisar mudar.</p></div>`;
+    const donas = unidadesDono();
+    const eq = (E.equipe || {})[u.sigla] || { pessoas: [], convites: [] };
+    const outros = eq.pessoas.filter(p => p.uid !== E.perfil.id);
+    const aguardando = outros.filter(p => p.situacao === "pendente");
+    const ativos = eq.pessoas.filter(p => p.situacao === "aprovado").sort((a, b) => (b.uid === E.perfil.id) - (a.uid === E.perfil.id) || String(a.nome).localeCompare(String(b.nome)));
+    const fora = outros.filter(p => p.situacao === "recusado");
+    const abertos = eq.convites.filter(c => !c.usado).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em)));
+    const cel = (p) => p.perfil && p.perfil.celular ? foneBonito(p.perfil.celular) : "";
+    const pessoaCel = (p) => p.perfil && p.perfil.celular;
+    const perfilPendente = (p) => !!(p.perfil && p.perfil.situacao === "pendente");
+    return `
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha equipe</h1>
+        <p>Unidade ${esc(rotulo(u.sigla))}${u.cidade_uf ? ", " + esc(u.cidade_uf) : ""}. Você é o dono: convide os vendedores e libere quem pedir acesso. Todos da equipe pedem e trabalham os leads da unidade.</p></div>
+        <div class="acoes"><button class="btn btn-primario" data-acao="convidar" data-sigla="${esc(u.sigla)}">+ Convidar pessoa</button></div></div>
+      ${donas.length > 1 ? `<div class="pilulas" role="group" aria-label="Unidade" style="margin-bottom:16px">${donas.map(x => `<button data-unidade="${esc(x.sigla)}" aria-pressed="${x.sigla === u.sigla}">${esc(rotulo(x.sigla))}${(E.equipe[x.sigla] || { pessoas: [] }).pessoas.some(p => p.situacao === "pendente" && p.uid !== E.perfil.id) ? " •" : ""}</button>`).join("")}</div>` : ""}
+      ${eq.erro ? `<div class="erro-form">${esc(eq.erro)}</div>` : ""}
+      ${aguardando.length ? `<section class="bloco equipe-espera"><h2>Aguardando você (${aguardando.length})</h2>
+        <p class="sub">Confira se a pessoa é mesmo da sua unidade antes de liberar.</p>
+        <div class="tabela-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th>Celular</th><th>Pediu</th><th>Ações</th></tr></thead><tbody>
+        ${aguardando.map(p => `<tr><td><b>${esc(p.nome)}</b><div class="sec">${esc(p.email)}</div>${p.principal ? "" : `<div class="sec">Pediu esta unidade como extra</div>`}</td>
+          <td>${esc(cel(p) || "–")}</td><td>${p.perfil && p.perfil.criadoEm ? haDias(p.perfil.criadoEm) : p.criadoEm ? haDias(p.criadoEm) : "–"}</td>
+          <td><div class="acoes"><button class="btn btn-p btn-primario" data-acao="liberarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}" data-perfil="${perfilPendente(p) ? 1 : ""}">Liberar</button>
+            <button class="btn btn-p btn-perigo" data-acao="recusarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}" data-perfil="${perfilPendente(p) ? 1 : ""}">Recusar</button></div></td></tr>`).join("")}
+        </tbody></table></div></section>` : ""}
+      <section class="bloco" style="margin-bottom:18px"><h2>Equipe da unidade (${ativos.length})</h2>
+        <div class="tabela-wrap" style="border:0"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Celular</th><th>Ações</th></tr></thead><tbody>
+        ${ativos.map(p => { const eu = p.uid === E.perfil.id; const link = !eu && pessoaCel(p) ? zap(pessoaCel(p), `Olá, ${primeiroNome(p.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, da unidade ${u.sigla}.`) : "";
+          return `<tr><td><b>${esc(p.nome)}</b> <span class="etiqueta${eu ? " dono" : ""}">${eu ? "Dono" : "Vendedor"}</span></td><td>${esc(p.email)}</td><td>${esc(eu ? foneBonito(E.perfil.celular || "") : cel(p) || "–")}</td>
+          <td><div class="acoes">${eu ? `<span class="sec">Você</span>` : `${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}<button class="btn btn-p btn-perigo-leve" data-acao="tirarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}">Tirar da unidade</button>`}</div></td></tr>`; }).join("")}
+        </tbody></table></div></section>
+      <section class="bloco" style="margin-bottom:18px"><h2>Convites abertos (${abertos.length})</h2>
+        ${abertos.length ? `<div class="tabela-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th>Enviado</th><th>Vale até</th><th>Ações</th></tr></thead><tbody>
+        ${abertos.map(c => { const venc = conviteVencido(c); const link = !venc && c.celular ? zap(c.celular, msgConvite(c)) : "";
+          return `<tr${venc ? ' class="vencido"' : ""}><td><b>${esc(c.nome)}</b><div class="sec">${esc(c.email)}</div></td><td>${haDias(c.criado_em)}${c.criado_por_nome && c.criado_por !== E.perfil.id ? `<div class="sec">por ${esc(c.criado_por_nome)}</div>` : ""}</td>
+          <td>${venc ? `<span class="etiqueta alerta">Venceu</span>` : esc(validoAte(c))}</td>
+          <td><div class="acoes">${venc ? `<button class="btn btn-p" data-acao="convidar" data-sigla="${esc(u.sigla)}" data-nome="${esc(c.nome)}" data-email="${esc(c.email)}" data-cel="${esc(c.celular || "")}" data-trocar="${esc(c.id)}">Mandar outro</button>`
+            : `${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">Reenviar no WhatsApp</a>` : ""}<button class="btn btn-p" data-acao="copiarConvite" data-id="${esc(c.id)}">Copiar link</button>`}
+            <button class="btn btn-p btn-perigo-leve" data-acao="cancelarConvite" data-id="${esc(c.id)}">Cancelar</button></div></td></tr>`; }).join("")}
+        </tbody></table></div>` : `<p class="sub">Nenhum convite aberto. Use <b>+ Convidar pessoa</b> para mandar o link pelo WhatsApp.</p>`}
+      </section>
+      ${fora.length ? `<section class="bloco" style="margin-bottom:18px"><h2>Sem acesso (${fora.length})</h2>
+        <div class="tabela-wrap" style="border:0"><table><tbody>${fora.map(p => `<tr><td><b>${esc(p.nome)}</b><div class="sec">${esc(p.email)}</div></td>
+          <td><div class="acoes">${p.perfil && p.perfil.situacao !== "aprovado" ? `<span class="sec">Cadastro recusado. Para reativar, fale com o time de ${esc(TIME)}.</span>`
+            : `<button class="btn btn-p" data-acao="liberarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}" data-perfil="">Liberar de novo</button>`}</div></td></tr>`).join("")}</tbody></table></div></section>` : ""}
+      <section class="bloco como-funciona"><h2>Como funciona o convite</h2>
+        <ol><li>Clique em <b>+ Convidar pessoa</b> e preencha nome, e-mail (<b>${esc(u.sigla.toLowerCase())}.nome</b>@…) e celular.</li>
+          <li>Mande o link pelo WhatsApp. Ele vale ${VALIDADE_CONVITE} dias e só funciona com o e-mail convidado.</li>
+          <li>A pessoa cria a senha e já entra liberada na unidade, sem esperar aprovação.</li></ol>
+        <p class="sub">Quem criar o acesso sozinho pela tela de entrada aparece em <b>Aguardando você</b>.</p></section>`;
+  }
+
+  function janelaConvidar(sigla, pre) {
+    pre = pre || {};
+    const dominios = cfg.dominiosPermitidos || ["voeazul.com.br", "azulcargo.com.br"];
+    const eq = (E.equipe || {})[sigla] || { pessoas: [], convites: [] };
+    abrir(`
+      <div class="janela-topo"><div><h2>Convidar pessoa para a unidade ${esc(rotulo(sigla))}</h2><p>O portal cria um link para você mandar pelo WhatsApp.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo">
+        <div class="campo"><label for="cv-nome">Nome completo</label><input id="cv-nome" type="text" maxlength="120" autocomplete="off" value="${esc(pre.nome || "")}"></div>
+        <div class="campo"><label for="cv-email">E-mail Azul da pessoa</label><input id="cv-email" type="email" autocomplete="off" value="${esc(pre.email || sigla.toLowerCase() + ".")}" placeholder="${esc(sigla.toLowerCase())}.nome@${esc(dominios[0])}">
+          <span class="dica">Começa com a sigla da unidade: <b>${esc(sigla.toLowerCase())}</b>.nome@${esc(dominios[0])}</span></div>
+        <div class="campo"><label for="cv-cel">Celular com DDD</label><input id="cv-cel" type="tel" inputmode="tel" value="${esc(pre.cel ? foneBonito(pre.cel) : "")}" placeholder="(11) 91234-5678"><span class="dica">É para onde vai o link pelo WhatsApp.</span></div>
+        <div class="erro-form" id="cv-erro" hidden></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-primario" id="cv-ok">Criar convite</button></div>`,
+    (j) => {
+      const em = j.querySelector("#cv-email");
+      if (!pre.nome) setTimeout(() => j.querySelector("#cv-nome").focus(), 0);
+      j.querySelector("#cv-ok").addEventListener("click", async (ev) => {
+        const erro = j.querySelector("#cv-erro"), mostrar = (m) => { erro.textContent = m; erro.hidden = false; };
+        const nome = j.querySelector("#cv-nome").value.trim(), email = em.value.trim().toLowerCase(), cel = celularLimpo(j.querySelector("#cv-cel").value);
+        if (nome.length < 2) return mostrar("Digite o nome da pessoa.");
+        if (!dominios.includes(email.split("@")[1] || "")) return mostrar(`Use o e-mail corporativo (${dominios.map(d => "@" + d).join(" ou ")}).`);
+        if (API.siglaDoEmail(email) !== sigla || email.split("@")[0].length <= sigla.length + 1) return mostrar(`O e-mail precisa ser ${sigla.toLowerCase()}.nome@${email.split("@")[1] || dominios[0]}.`);
+        if (!cel) return mostrar("Digite o celular com DDD, por exemplo (11) 91234-5678.");
+        if (eq.pessoas.some(p => p.email === email && p.situacao === "aprovado")) return mostrar("Essa pessoa já está na equipe da unidade.");
+        if (eq.convites.some(c => !c.usado && c.email === email && !conviteVencido(c) && c.id !== pre.trocar)) return mostrar("Já tem um convite aberto para esse e-mail. Use “Reenviar no WhatsApp” na lista.");
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Convidar ${nome}?`, texto: `${esc(email)} · ${esc(foneBonito(cel))}. A pessoa entra liberada na unidade ${esc(sigla)} assim que criar a senha.`, botao: "Criar convite" }))) return;
+        try {
+          const codigo = await ocupado(bt, async () => { const id = await API.convidar({ sigla, email, nome, celular: cel }); if (pre.trocar) await API.cancelarConvite(pre.trocar).catch(() => {}); return id; });
+          await recarregar();
+          janelaConviteCriado({ id: codigo, sigla, email, nome, celular: cel, criado_em: new Date().toISOString() });
+        } catch (e) { mostrar(API.traduzir(e)); }
+      });
+    });
+  }
+
+  function janelaConviteCriado(c) {
+    const link = linkConvite(c.id), wa = zap(c.celular, msgConvite(c));
+    abrir(`
+      <div class="janela-corpo" style="text-align:center;padding-top:28px">
+        <div class="ok-grande">✓</div>
+        <h2 style="margin:0 0 6px;font-size:21px">Convite criado</h2>
+        <p class="sub" style="margin:0 0 16px">Agora mande o link para <b class="forte">${esc(c.nome)}</b>. Ele vale até ${esc(validoAte(c))}.</p>
+        <div class="campo" style="text-align:left"><label for="cc-link">Link do convite</label><input id="cc-link" class="link-convite" type="text" readonly value="${esc(link)}"></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" id="cc-copiar">Copiar link</button>${wa ? `<a class="btn btn-zap" id="cc-zap" href="${esc(wa)}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>` : ""}<button class="btn btn-primario" data-fechar>Pronto</button></div>`,
+    (j) => {
+      j.querySelector("#cc-link").addEventListener("focus", (e) => e.target.select());
+      j.querySelector("#cc-copiar").addEventListener("click", async () => aviso(await copiar(msgConvite(c)) ? "Mensagem com o link copiada. É só colar no WhatsApp." : "Não deu para copiar. Selecione o link e copie.", false));
+    });
+  }
+
   // Campo de segmentos com busca (até 3).
   function campoSegmentos(raiz, escolhidos) {
     const entrada = raiz.querySelector("#p-busca"), lista = raiz.querySelector("#p-lista"), chips = raiz.querySelector("#p-chips");
@@ -1895,6 +2136,10 @@
     return `
       <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>${ehAdmin() ? "Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar." : "Só administradores aprovam, mudam o acesso e excluem cadastros. Aqui você consulta quem tem acesso."}</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
+      ${ehAdmin() && donosSugeridos().length ? `<section class="bloco faixa-donos" style="margin-bottom:18px"><h2>${donosSugeridos().length} unidade${donosSugeridos().length > 1 ? "s" : ""} sem dono</h2>
+        <p class="sub">O dono convida e libera os vendedores da unidade. Sugestão: o primeiro representante aprovado de cada uma.</p>
+        <p class="donos-lista">${donosSugeridos().slice(0, 12).map(x => `<span><b>${esc(x.sigla)}</b> ${esc(x.nome)}</span>`).join("")}${donosSugeridos().length > 12 ? `<span>e mais ${donosSugeridos().length - 12}</span>` : ""}</p>
+        <button class="btn btn-primario" data-acao="definirDonos">Definir os donos sugeridos</button></section>` : ""}
       ${extras.length && ehAdmin() ? `<section class="bloco" style="margin-bottom:18px"><h2>Pedidos de acesso a outras unidades</h2>
         <div class="tabela-wrap" style="border:0"><table><thead><tr><th>Pessoa</th><th>Unidade pedida</th><th>Unidades que já tem</th><th>Ações</th></tr></thead><tbody>
         ${extras.map(a => { const u = unidadeInfo(a.sigla); return `<tr><td><b>${esc(a.nome)}</b><div class="sec">${esc(a.email)}</div></td>
@@ -1917,7 +2162,10 @@
           const siglaOk = p.cargo !== "Representante" || API.siglaDoEmail(p.email) === p.siglaPrincipal;
           return `<tr>
             <td><b>${esc(p.nome)}</b> <span class="etiqueta">${esc(p.cargo || "Representante")}</span><div class="sec">${esc(p.email)}</div></td>
-            <td>${us.length ? us.map(a => { const u = unidadeInfo(a.sigla); return `<div><b>${esc(u.nome || a.sigla)}</b>${a.principal ? "" : " (extra)"} <span class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}${a.situacao !== "aprovado" ? " · " + esc(a.situacao) : ""}</span></div>`; }).join("") : `<span class="sec">${p.papel === "time" || !p.siglaPrincipal ? "Time (sem unidade)" : "–"}</span>`}
+            <td>${us.length ? us.map(a => { const u = unidadeInfo(a.sigla); const dono = u.dono_uid === p.id;
+              const podeDono = ehAdmin() && !dono && !u.tipo && a.situacao === "aprovado" && p.situacao === "aprovado" && (p.papel || "representante") === "representante" && (p.cargo || "Representante") === "Representante";
+              return `<div><b>${esc(u.nome || a.sigla)}</b>${a.principal ? "" : " (extra)"} ${dono ? `<span class="etiqueta dono">Dono</span> ` : ""}<span class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}${a.situacao !== "aprovado" ? " · " + esc(a.situacao) : ""}</span>${podeDono ? ` <button class="link-mini" data-acao="tornarDono" data-id="${esc(p.id)}" data-sigla="${esc(a.sigla)}">Tornar dono</button>` : ""}</div>`; }).join("") : `<span class="sec">${p.papel === "time" || !p.siglaPrincipal ? "Time (sem unidade)" : "–"}</span>`}
+              ${p.convite ? `<div class="sec">Entrou por convite do dono</div>` : ""}
               ${!siglaOk ? `<div class="sec" style="color:var(--danger)">A sigla não bate com o e-mail</div>` : ""}</td>
             <td>${esc(foneBonito(p.celular || ""))}</td>
             <td>${p.papel === "admin" ? "<b>Administrador</b><div class=\"sec\">Vê tudo e gerencia cadastros</div>" : p.papel === "time" ? "Time<div class=\"sec\">Vê e trabalha pedidos e leads</div>" : "Só as próprias unidades"}</td>
@@ -2219,8 +2467,8 @@
             <dt>Acesso</dt><dd>${p.papel === "admin" ? "Administrador (" + esc(TIME) + ")" : p.papel === "time" ? "Time de " + esc(TIME) : "Unidades"}</dd>
           </dl>
           ${!ehTime() ? `<h2 style="margin-top:18px">Minhas unidades</h2>
-            <div class="tabela-wrap"><table><thead><tr><th>Unidade</th><th>Cidade/UF</th><th>Região</th><th>Situação</th></tr></thead><tbody>
-            ${us.map(u => `<tr><td><b>${esc(rotulo(u.sigla))}</b>${u.principal ? "" : " (extra)"}</td><td>${esc(u.cidade_uf || "")}</td><td>${esc(u.regiao || "")}</td><td>${u.acesso === "aprovado" ? "Liberada" : u.acesso === "recusado" ? `Não liberada <button class="link-mini" data-acao="pedirDeNovo" data-sigla="${esc(u.sigla)}">Pedir de novo</button>` : "Aguardando o time"}</td></tr>`).join("")}
+            <div class="tabela-wrap"><table><thead><tr><th>Unidade</th><th>Cidade/UF</th><th>Região</th><th>Dono</th><th>Situação</th></tr></thead><tbody>
+            ${us.map(u => `<tr><td><b>${esc(rotulo(u.sigla))}</b>${u.principal ? "" : " (extra)"}</td><td>${esc(u.cidade_uf || "")}</td><td>${esc(u.regiao || "")}</td><td>${u.dono_uid === p.id ? `<span class="etiqueta dono">Você</span>` : esc(u.dono_nome || "–")}</td><td>${u.acesso === "aprovado" ? "Liberada" : u.acesso === "recusado" ? `Não liberada <button class="link-mini" data-acao="pedirDeNovo" data-sigla="${esc(u.sigla)}">Pedir de novo</button>` : "Aguardando o time"}</td></tr>`).join("")}
             </tbody></table></div>
             ${us.length < MAX_UNID ? `<button class="btn" style="margin-top:12px" data-acao="pedirUnidade">+ Pedir acesso a outra unidade</button>` : ""}` : ""}
         </section>
