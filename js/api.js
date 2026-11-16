@@ -214,6 +214,13 @@
         lote.update(db.doc("perfis/" + uid), { situacao: "excluido", excluido_em: TS(), excluido_por: cacheNome });
         await lote.commit();
       },
+      // Administrador: apaga o cadastro e os acessos (some do portal). Pedidos, leads e histórico continuam salvos.
+      async excluirDeVez(uid) {
+        const lote = db.batch();
+        (await db.collection("acessos").where("uid", "==", uid).get()).docs.forEach(d => lote.delete(d.ref));
+        lote.delete(db.doc("perfis/" + uid));
+        await lote.commit();
+      },
       // Volta para Aguardando; ao aprovar, a unidade principal é liberada de novo.
       async reativarCadastro(uid) { await db.doc("perfis/" + uid).update({ situacao: "pendente" }); },
       async reenviarConfirmacao() { if (auth.currentUser) await auth.currentUser.sendEmailVerification(continuar()); },
@@ -250,10 +257,20 @@
         const sigla = dados.sigla.toUpperCase();
         const lote = db.batch();
         const ref = db.doc("unidades/" + sigla);
+        const acesso = db.doc(`acessos/${u.uid}_${sigla}`);
+        // Ler um acesso que ainda não existe é negado pelas regras: nesse caso é pedido novo.
+        let ja = null;
+        try { ja = await acesso.get(); } catch (e) { ja = null; }
+        if (ja && ja.exists) {
+          if (ja.data().situacao === "recusado") return acesso.update({ situacao: "pendente" }); // pedido de novo
+          return; // já pedido ou já liberado
+        }
         if (!(await ref.get()).exists) lote.set(ref, { sigla, cidade_uf: dados.cidade_uf, regiao: dados.regiao, pedidoAtual: null, criadaEm: TS() });
-        lote.set(db.doc(`acessos/${u.uid}_${sigla}`), { uid: u.uid, sigla, situacao: "pendente", principal: false, nome: cacheNome, email: u.email.toLowerCase(), criadoEm: TS() });
+        lote.set(acesso, { uid: u.uid, sigla, situacao: "pendente", principal: false, nome: cacheNome, email: u.email.toLowerCase(), criadoEm: TS() });
         await lote.commit();
       },
+      // Unidade recusada: pede de novo (volta para aguardando o time).
+      async pedirDeNovo(sigla) { await db.doc(`acessos/${auth.currentUser.uid}_${sigla}`).update({ situacao: "pendente" }); },
 
       // Time
       async perfis() { return (await db.collection("perfis").get()).docs.map(doc); },
@@ -281,6 +298,22 @@
         return docs.map(doc).sort((a, b) => String(b.criada_em).localeCompare(String(a.criada_em)));
       },
       leadsDe: achatar,
+
+      // Avisa quando algo muda no banco (aprovação, base enviada, status), para a tela se atualizar sozinha.
+      // time: pedidos, cadastros, acessos e unidades; representante: o próprio cadastro, os acessos e os pedidos das unidades.
+      observar(siglas, aoMudar) {
+        const u = auth.currentUser; if (!u) return () => {};
+        const consultas = siglas
+          ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg))]
+          : [db.collection("pedidos"), db.collection("perfis"), db.collection("acessos"), db.collection("unidades")];
+        const primeira = new Set();
+        const saidas = consultas.map((q, i) => q.onSnapshot({ includeMetadataChanges: false }, (snap) => {
+          if (!primeira.has(i)) { primeira.add(i); return; } // a primeira leitura é a que a tela já tem
+          if (snap.metadata && snap.metadata.hasPendingWrites) return; // mudança feita aqui mesmo: a tela já recarrega
+          aoMudar();
+        }, () => {}));
+        return () => saidas.forEach(f => f());
+      },
 
       // Cria o pedido e troca o "pedido atual" da unidade no mesmo envio (é o que aplica o bloqueio).
       async criarPedido(dados) {
@@ -487,17 +520,22 @@
         await espera();
         const sigla = dados.sigla.toUpperCase();
         if (!db.unidades.some(u => u.sigla === sigla)) db.unidades.push({ id: sigla, sigla, cidade_uf: dados.cidade_uf, regiao: dados.regiao, pedidoAtual: null });
-        if (!db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla)) db.acessos.push({ id: `${usuario.id}_${sigla}`, uid: usuario.id, sigla, situacao: "pendente", principal: false, nome: eu().nome, email: eu().email });
+        const ja = db.acessos.find(a => a.uid === usuario.id && a.sigla === sigla);
+        if (ja) { if (ja.situacao === "recusado") ja.situacao = "pendente"; return; }
+        db.acessos.push({ id: `${usuario.id}_${sigla}`, uid: usuario.id, sigla, situacao: "pendente", principal: false, nome: eu().nome, email: eu().email });
       },
+      async pedirDeNovo(sigla) { await espera(); const a = db.acessos.find(x => x.uid === usuario.id && x.sigla === sigla); if (!a || a.situacao !== "recusado") negar(); a.situacao = "pendente"; },
       async perfis() { if (!ehTime()) negar(); return copia(db.perfis); },
       async acessos() { if (!ehTime()) negar(); return copia(db.acessos); },
       async unidades() { return copia(db.unidades); },
       async atualizarPerfil(id, dados) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), dados); },
       async atualizarAcesso(id, situacao) { if (!ehAdmin()) negar(); db.acessos.find(a => a.id === id).situacao = situacao; },
       async excluirCadastro(id) { if (!ehAdmin() || id === usuario.id) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "excluido", excluido_em: new Date().toISOString(), excluido_por: eu().nome }); db.acessos.filter(a => a.uid === id).forEach(a => a.situacao = "recusado"); },
+      async excluirDeVez(id) { if (!ehAdmin() || id === usuario.id) negar(); db.perfis = db.perfis.filter(p => p.id !== id); db.acessos = db.acessos.filter(a => a.uid !== id); },
       async reativarCadastro(id) { if (!ehAdmin()) negar(); db.perfis.find(p => p.id === id).situacao = "pendente"; },
       async aprovarCadastro(id, papel) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), { situacao: "aprovado", ...(papel ? { papel } : {}) }); db.acessos.filter(a => a.uid === id && a.principal).forEach(a => a.situacao = "aprovado"); },
       async enviarRedefinicao() { if (!ehTime()) negar(); await espera(); },
+      observar() { return () => {}; },
       async pedidos(siglas) {
         const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : ehTime());
         return copia(lista).sort((a, b) => String(b.criada_em).localeCompare(String(a.criada_em)));

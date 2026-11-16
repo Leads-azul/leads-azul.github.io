@@ -77,6 +77,15 @@
     if (!v || v !== v.toUpperCase()) return v;
     return v.toLowerCase().split(/(\s+)/).map((p, i) => SIGLAS.has(p) ? p.toUpperCase() : (i && MINUSCULAS.has(p)) ? p : p.charAt(0).toUpperCase() + p.slice(1)).join("");
   }
+  // "oSASCO/sP" -> "Osasco/SP"; "são paulo - sp" -> "São Paulo/SP"; "sao jose dos campos" -> "Sao Jose dos Campos".
+  function cidadeUf(v) {
+    const t = String(v || "").trim().replace(/\s+/g, " ");
+    if (!t) return t;
+    const m = t.match(/^(.*?)(?:\s*[\/\-,]\s*([A-Za-z]{2}))?$/);
+    const cap = (p) => p.split("-").map(x => x.charAt(0).toUpperCase() + x.slice(1)).join("-");
+    const cidade = (m ? m[1] : t).toLowerCase().split(" ").map((p, i) => (i && MINUSCULAS.has(p)) ? p : cap(p)).join(" ");
+    return m && m[2] ? `${cidade}/${m[2].toUpperCase()}` : cidade;
+  }
   const cnpjBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : String(v || "").trim(); };
   const cepBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 8 ? `${d.slice(0, 5)}-${d.slice(5)}` : d; };
   const cnaeBonito = (v) => { const d = String(v || "").replace(/\D/g, ""); return d.length === 7 ? `${d.slice(0, 4)}-${d[4]}/${d.slice(5)}` : d; };
@@ -160,6 +169,58 @@
   function fechar() { if ($janela.open) $janela.close(); }
   $janela.addEventListener("click", (e) => { if (e.target === $janela) fechar(); });
 
+  // ---- Confirmação de toda ação: "Tem certeza?" com o aviãozinho voando ao confirmar ----
+  const $conf = document.createElement("dialog");
+  $conf.className = "confirmar"; $conf.setAttribute("aria-labelledby", "cf-titulo");
+  document.body.appendChild($conf);
+  const semAnimacao = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const AVIAO = `<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M3 21.5 L37 20 Q39 20 37 21.6 L3 23 Z" fill="#12306F"/><path d="M16 21.2 L9 32 L13 32 L24 21.4 Z" fill="#1661D8"/><path d="M16 21.4 L9 9.5 L13 9.5 L24 21 Z" fill="#1661D8"/><path d="M3.5 21.6 L1 15.5 L4 15.5 L8 21.4 Z" fill="#1661D8"/></svg>`;
+  function voar(botao) {
+    if (semAnimacao() || !botao.animate) return 0;
+    const r = botao.getBoundingClientRect(), x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
+    const x1 = Math.min(window.innerWidth + 60, x0 + 300), y1 = -70;
+    const rastro = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    rastro.setAttribute("class", "voo-rastro"); rastro.setAttribute("aria-hidden", "true");
+    rastro.innerHTML = `<path d="M${x0} ${y0} Q ${x0 + 120} ${y0 - 120} ${x1} ${y1}" fill="none" stroke="#1661D8" stroke-width="2.5" stroke-dasharray="6 9" stroke-linecap="round"/>`;
+    const aviao = document.createElement("div");
+    aviao.className = "voo-aviao"; aviao.innerHTML = AVIAO;
+    aviao.style.left = (x0 - 20) + "px"; aviao.style.top = (y0 - 20) + "px";
+    $conf.append(rastro, aviao);
+    const dx = x1 - x0, dy = y1 - y0;
+    aviao.animate([
+      { transform: "translate(0,0) rotate(-35deg) scale(.7)", opacity: 1 },
+      { transform: `translate(${dx * .4}px,${dy * .3}px) rotate(-38deg) scale(1)`, opacity: 1, offset: .45 },
+      { transform: `translate(${dx}px,${dy}px) rotate(-55deg) scale(1.1)`, opacity: 1 }
+    ], { duration: 750, easing: "ease-in", fill: "forwards" });
+    rastro.animate([{ clipPath: `inset(0 ${window.innerWidth - x0}px 0 0)`, opacity: 1 }, { clipPath: "inset(0 0 0 0)", opacity: 1, offset: .7 }, { clipPath: "inset(0 0 0 0)", opacity: 0 }], { duration: 1000, easing: "ease-in", fill: "forwards" });
+    const corpo = $conf.querySelector(".cf-corpo");
+    if (corpo) corpo.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-8px) scale(.98)" }], { duration: 300, delay: 450, fill: "forwards" });
+    return 820;
+  }
+  // confirmar({ titulo, texto, botao, perigo }) -> true/false. A ação começa assim que a pessoa confirma; o avião voa por cima.
+  function confirmar({ titulo, texto = "", botao = "Confirmar", perigo = false, campo }) {
+    return new Promise(resolve => {
+      $conf.innerHTML = `<div class="cf-corpo"><h2 id="cf-titulo">${esc(titulo)}</h2>${texto ? `<p>${texto}</p>` : ""}
+        ${campo !== undefined ? `<textarea class="cf-campo" aria-label="${esc(titulo)}" maxlength="2000">${esc(campo)}</textarea>` : ""}
+        <div class="cf-botoes"><button type="button" class="btn" data-cf="nao">Cancelar</button><button type="button" class="btn ${perigo ? "btn-perigo" : "btn-primario"}" data-cf="sim">${esc(botao)}</button></div></div>`;
+      let feito = false;
+      const terminar = (ok, botaoSim) => {
+        if (feito) return; feito = true;
+        const t = $conf.querySelector(".cf-campo");
+        resolve(ok && t ? t.value : ok);
+        const tempo = ok && botaoSim ? voar(botaoSim) : 0;
+        setTimeout(() => { if ($conf.open) $conf.close(); $conf.innerHTML = ""; }, tempo);
+      };
+      $conf.querySelector('[data-cf="nao"]').onclick = () => terminar(false);
+      const sim = $conf.querySelector('[data-cf="sim"]');
+      sim.onclick = () => terminar(true, sim);
+      $conf.oncancel = (e) => { e.preventDefault(); terminar(false); };
+      $conf.onclick = (e) => { if (e.target === $conf) terminar(false); };
+      $conf.showModal();
+      ($conf.querySelector(".cf-campo") || (perigo ? $conf.querySelector('[data-cf="nao"]') : sim)).focus();
+    });
+  }
+
   async function ocupado(botao, fn) {
     const texto = botao.textContent;
     botao.disabled = true; botao.textContent = "Aguarde…";
@@ -195,6 +256,7 @@
       E.tela = E.tela || (ehTime() ? "pedidos" : "leads");
       await carregar();
       desenhar();
+      ligarTempoReal();
     } catch (e) {
       $app.innerHTML = `<div class="carregando"><div class="vazio"><h2>Não foi possível abrir o portal</h2><p>${esc(API.traduzir(e))}</p><button class="btn btn-primario" onclick="location.reload()">Tentar de novo</button></div></div>`;
     }
@@ -205,11 +267,44 @@
       const [pedidos, perfis, acessos, unidades] = await Promise.all([API.pedidos(), API.perfis(), API.acessos(), API.unidades()]);
       Object.assign(E, { pedidos, perfis, acessos, unidades });
     } else {
+      // Representante: relê o próprio cadastro (unidade liberada aparece na hora, sem recarregar a página).
+      const p = await API.meuPerfil();
+      if (p) E.perfil = p;
+      if (!minhasUnidades().some(u => u.sigla === E.u)) E.u = (minhasUnidades()[0] || {}).sigla;
       E.pedidos = await API.pedidos(minhasUnidades().map(u => u.sigla));
     }
+    // Cidades gravadas antes da padronização aparecem certas na tela ("oSASCO/sP" -> "Osasco/SP").
+    [E.pedidos, E.unidades, (E.perfil && E.perfil.unidades) || []].forEach(lista => (lista || []).forEach(x => { if (x && x.cidade_uf) x.cidade_uf = cidadeUf(x.cidade_uf); }));
     E.leads = API.leadsDe(E.pedidos);
   }
-  async function recarregar() { await carregar(); desenhar(); }
+  async function recarregar() { await carregar(); desenhar(); ligarTempoReal(); }
+
+  // Tempo real: quando algo muda no banco, a tela se atualiza sozinha.
+  // Se tiver uma janela aberta ou a pessoa estiver digitando, espera ela terminar para não atrapalhar.
+  let pararObservar = null, chaveObservar = "", atualizarDepois = false, timerTempoReal = null;
+  function ligarTempoReal() {
+    if (!E.perfil || E.perfil.situacao !== "aprovado") return;
+    const siglas = ehTime() ? null : minhasUnidades().map(u => u.sigla);
+    const chave = siglas ? siglas.join(",") : "time";
+    if (pararObservar && chave === chaveObservar) return;
+    if (pararObservar) pararObservar();
+    chaveObservar = chave;
+    pararObservar = API.observar(siglas, () => { clearTimeout(timerTempoReal); timerTempoReal = setTimeout(atualizarSozinho, 700); });
+  }
+  function ocupadoAgora() {
+    const a = document.activeElement;
+    return $janela.open || $conf.open || (a && $app.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
+  }
+  async function atualizarSozinho() {
+    if (ocupadoAgora()) { atualizarDepois = true; return; }
+    atualizarDepois = false;
+    const y = window.scrollY, q = document.querySelector(".quadro"), qx = q ? q.scrollLeft : 0;
+    try { await carregar(); desenhar(); } catch (e) { return; }
+    window.scrollTo(0, y); const q2 = document.querySelector(".quadro"); if (q2) q2.scrollLeft = qx;
+    ligarTempoReal();
+  }
+  $janela.addEventListener("close", () => { if (atualizarDepois) setTimeout(atualizarSozinho, 300); });
+  document.addEventListener("focusout", () => { if (atualizarDepois) setTimeout(() => { if (atualizarDepois) atualizarSozinho(); }, 400); });
 
   // ------------------------------------------------------------------
   // Acesso: entrar e criar cadastro
@@ -340,7 +435,7 @@
         if (!refazer && v("c-senha") !== v("c-senha2")) return mostrar("As senhas não são iguais.");
         try {
           const r = await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(em, v("c-senha"), {
-            nome: v("c-nome"), celular: v("c-cel"), sigla: sg, cidade_uf: v("c-cidade"), regiao: v("c-regiao"), time: ehDoTime, cargo: cargo()
+            nome: v("c-nome"), celular: v("c-cel"), sigla: sg, cidade_uf: cidadeUf(v("c-cidade")), regiao: v("c-regiao"), time: ehDoTime, cargo: cargo()
           }));
           E.tela = null; E.cadastroNovo = true; iniciar();
         } catch (e) { mostrar(API.traduzir(e)); }
@@ -418,11 +513,15 @@
         <p class="sub" style="margin-top:12px">Seu celular: ${esc(foneBonito(p.celular || "") || "não informado")}</p>
       </div></div>`;
     document.getElementById("b-atualizar").onclick = () => iniciar();
+    // Entra sozinho quando o time aprovar (sem precisar clicar em "Já fui aprovado").
+    if (pararObservar) pararObservar();
+    chaveObservar = "espera";
+    pararObservar = API.observar([], () => { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } iniciar(); });
     document.getElementById("b-celular").onclick = () => janelaCelular();
     document.getElementById("b-sair").onclick = sair;
   }
 
-  async function sair() { await API.sair(); E.perfil = null; E.tela = null; telaAcesso("entrar"); }
+  async function sair() { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } await API.sair(); E.perfil = null; E.tela = null; telaAcesso("entrar"); }
 
   // ------------------------------------------------------------------
   // Estrutura com menu lateral
@@ -487,6 +586,10 @@
       if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); janelaLead(el.dataset.lead); }
     }));
     m.querySelectorAll("[data-hoje]").forEach(b => b.addEventListener("click", () => janelaLead(b.dataset.id, { canal: b.dataset.hoje })));
+    m.querySelectorAll("[data-vista-hoje]").forEach(b => b.addEventListener("click", () => {
+      E.vistaHoje = b.dataset.vistaHoje; try { localStorage.setItem("portal-vista-hoje", E.vistaHoje); } catch (e) { /* ignora */ }
+      desenhar();
+    }));
     m.querySelectorAll("[data-adiar]").forEach(b => b.addEventListener("click", () => {
       const caixa = b.closest(".hoje-acoes");
       caixa.innerHTML = `<span class="sub">Adiar para:</span>${[["Amanhã", somaDias(1)], ["Em 3 dias", somaDias(3)], ["Próxima semana", proximaSegunda()]]
@@ -509,25 +612,37 @@
     exportar: () => exportarLeads(),
     irPedidos: () => { E.tela = "pedidos"; desenhar(); },
     irLeads: () => { E.tela = "leads"; desenhar(); },
-    aprovar: (b) => mudar(() => API.aprovarCadastro(b.dataset.id, b.dataset.papel), b.dataset.papel === "admin" ? "Aprovado como administrador." : b.dataset.papel === "time" ? "Aprovado como time." : "Cadastro aprovado."),
+    aprovar: (b) => seConfirmar({ titulo: `Aprovar ${perfilDe(b.dataset.id).nome || "este cadastro"}${b.dataset.papel === "admin" ? " como administrador" : b.dataset.papel === "time" ? " como time" : ""}?`,
+        texto: b.dataset.papel === "admin" ? "A pessoa passa a ver tudo e a aprovar cadastros, mudar acessos e excluir." : b.dataset.papel === "time" ? "A pessoa passa a ver e trabalhar todos os pedidos e leads." : "A pessoa passa a usar o portal na unidade dela.", botao: "Aprovar" },
+      () => API.aprovarCadastro(b.dataset.id, b.dataset.papel), b.dataset.papel === "admin" ? "Aprovado como administrador." : b.dataset.papel === "time" ? "Aprovado como time." : "Cadastro aprovado."),
     editarPessoa: (b) => janelaEditarPessoa(b.dataset.id),
     meuCelular: () => janelaCelular(),
-    recusar: (b) => mudar(() => API.atualizarPerfil(b.dataset.id, { situacao: "recusado" }), "Cadastro recusado."),
+    recusar: (b) => seConfirmar({ titulo: `${perfilDe(b.dataset.id).situacao === "aprovado" ? "Bloquear" : "Recusar"} ${perfilDe(b.dataset.id).nome || "este cadastro"}?`, texto: "A pessoa fica sem acesso ao portal. Dá para aprovar de novo depois.", botao: perfilDe(b.dataset.id).situacao === "aprovado" ? "Bloquear" : "Recusar", perigo: true },
+      () => API.atualizarPerfil(b.dataset.id, { situacao: "recusado" }), perfilDe(b.dataset.id).situacao === "aprovado" ? "Acesso bloqueado." : "Cadastro recusado."),
     papel: (b) => {
       const x = b.dataset.papel;
-      const aviso1 = { admin: "Tornar administrador? A pessoa passa a aprovar cadastros, mudar acessos e excluir.", time: "Dar acesso de time? A pessoa passa a ver e trabalhar todos os pedidos e leads, sem gerenciar cadastros.", representante: "Voltar para representante? A pessoa passa a ver só as próprias unidades." }[x];
-      if (confirm(aviso1)) mudar(() => API.atualizarPerfil(b.dataset.id, { papel: x }), `Acesso alterado para ${PAPEL[x].toLowerCase()}.`);
+      const texto = { admin: "A pessoa passa a aprovar cadastros, mudar acessos e excluir.", time: "A pessoa passa a ver e trabalhar todos os pedidos e leads, sem gerenciar cadastros.", representante: "A pessoa passa a ver só as próprias unidades." }[x];
+      seConfirmar({ titulo: `Tornar ${perfilDe(b.dataset.id).nome || "esta pessoa"} ${PAPEL[x].toLowerCase()}?`, texto, botao: `Tornar ${PAPEL[x].toLowerCase()}` },
+        () => API.atualizarPerfil(b.dataset.id, { papel: x }), `Acesso alterado para ${PAPEL[x].toLowerCase()}.`);
     },
-    reativar: (b) => mudar(() => API.reativarCadastro(b.dataset.id), "Cadastro reativado. Ele está em Aguardando para aprovar."),
-    aprovarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "aprovado"), "Unidade liberada."),
-    recusarUnidade: (b) => mudar(() => API.atualizarAcesso(b.dataset.id, "recusado"), "Unidade recusada."),
+    reativar: (b) => seConfirmar({ titulo: `Reativar ${perfilDe(b.dataset.id).nome || "este cadastro"}?`, texto: "O cadastro volta para Aguardando. Depois é só aprovar.", botao: "Reativar" },
+      () => API.reativarCadastro(b.dataset.id), "Cadastro reativado. Ele está em Aguardando para aprovar."),
+    aprovarUnidade: (b) => seConfirmar({ titulo: `Liberar a unidade ${acessoDe(b.dataset.id).sigla || ""}?`, texto: `${esc(acessoDe(b.dataset.id).nome || "A pessoa")} passa a pedir e trabalhar leads dessa unidade.`, botao: "Liberar" },
+      () => API.atualizarAcesso(b.dataset.id, "aprovado"), "Unidade liberada."),
+    recusarUnidade: (b) => seConfirmar({ titulo: `Recusar a unidade ${acessoDe(b.dataset.id).sigla || ""}?`, texto: "A pessoa poderá pedir de novo, se for o caso.", botao: "Recusar", perigo: true },
+      () => API.atualizarAcesso(b.dataset.id, "recusado"), "Unidade recusada."),
+    pedirDeNovo: (b) => seConfirmar({ titulo: `Pedir de novo a unidade ${b.dataset.sigla}?`, texto: `O pedido volta para o time de ${esc(TIME)} conferir.`, botao: "Pedir de novo" },
+      async () => { await API.pedirDeNovo(b.dataset.sigla); }, "Pedido enviado de novo ao time."),
     senha: (b) => janelaSenha(b.dataset.id),
     pedirUnidade: () => janelaPedirUnidade(),
-    excluir: (b) => janelaExcluir(b.dataset.id)
+    excluir: (b) => janelaExcluir(b.dataset.id),
+    excluirDeVez: (b) => excluirDeVez(b.dataset.id)
   };
   async function mudar(fn, msg) {
     try { await fn(); await recarregar(); aviso(msg); } catch (e) { aviso(API.traduzir(e), true); }
   }
+  async function seConfirmar(opcoes, fn, msg) { if (await confirmar(opcoes)) await mudar(fn, msg); }
+  const acessoDe = (id) => (E.acessos || []).find(a => a.id === id) || {};
 
   // ------------------------------------------------------------------
   // Leads: filtros, Kanban e lista
@@ -627,9 +742,32 @@
 
   function ligarKanban(raiz) {
     let arrastando = null;
+    // Enquanto arrasta, o quadro rola sozinho quando o cartão chega perto da borda (dá para levar até a última coluna).
+    const quadro = raiz.querySelector(".quadro");
+    let px = 0, py = 0, rolando = null;
+    const seguir = (e) => { px = e.clientX; py = e.clientY; };
+    const rolar = () => {
+      if (!arrastando || !quadro) { rolando = null; return; }
+      const r = quadro.getBoundingClientRect(), borda = Math.min(120, r.width / 5);
+      let dx = 0;
+      if (px > r.right - borda) dx = Math.min(28, 6 + (px - (r.right - borda)) / 3);
+      else if (px > 0 && px < r.left + borda) dx = -Math.min(28, 6 + (r.left + borda - px) / 3);
+      if (dx) quadro.scrollLeft += dx;
+      if (py > 0 && py < 70) window.scrollBy(0, -14); else if (py > window.innerHeight - 70) window.scrollBy(0, 14);
+      rolando = requestAnimationFrame(rolar);
+    };
     raiz.querySelectorAll(".cartao[draggable]").forEach(c => {
-      c.addEventListener("dragstart", (e) => { arrastando = c.dataset.lead; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", arrastando); });
-      c.addEventListener("dragend", () => { arrastando = null; raiz.querySelectorAll(".alvo").forEach(x => x.classList.remove("alvo")); });
+      c.addEventListener("dragstart", (e) => {
+        arrastando = c.dataset.lead; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", arrastando);
+        px = e.clientX; py = e.clientY;
+        document.addEventListener("dragover", seguir);
+        if (!rolando) rolando = requestAnimationFrame(rolar);
+      });
+      c.addEventListener("dragend", () => {
+        arrastando = null; document.removeEventListener("dragover", seguir);
+        if (rolando) { cancelAnimationFrame(rolando); rolando = null; }
+        raiz.querySelectorAll(".alvo").forEach(x => x.classList.remove("alvo"));
+      });
     });
     raiz.querySelectorAll("[data-coluna]").forEach(col => {
       col.addEventListener("dragover", (e) => { if (arrastando) { e.preventDefault(); col.classList.add("alvo"); } });
@@ -645,6 +783,7 @@
 
   async function adiar(id, quando) {
     const l = E.leads.find(x => x.id === id);
+    if (!(await confirmar({ titulo: `Adiar ${l.empresa}?`, texto: `O próximo contato passa para ${data(quando)}.`, botao: "Adiar" }))) return;
     try {
       await API.atualizarLead(id, tentarDevido(l) && !retornoDevido(l) ? { tentar_em: quando } : { retorno: quando });
       await aposMudarLead(`${l.empresa}: próximo contato em ${data(quando)}.`);
@@ -655,6 +794,7 @@
     const l = E.leads.find(x => x.id === id);
     // Sem interesse pede o motivo: abre a ficha já com o status escolhido.
     if (status === "Sem interesse") { desenhar(); janelaLead(id, { status }); return; }
+    if (!(await confirmar({ titulo: `Mudar ${l.empresa} para ${status}?`, texto: `Hoje está em ${esc(l.status)}. ${esc(DESC[status] || "")}`, botao: "Mudar status" }))) { desenhar(); return; }
     const extra = l.status === "Sem interesse" ? { motivo: "", motivo_outro: "", tentar_em: "" } : {};
     if (status === "Contato inválido") Object.assign(extra, { retorno: "", retorno_hora: "", lembrete: "" });
     try {
@@ -861,9 +1001,9 @@
 
       st.addEventListener("change", () => { j.querySelector("#l-desc").textContent = DESC[st.value] || ""; if (!dt.value && st.value !== "Novo") dt.value = hojeISO(); mostrarBlocos(); erro.hidden = true; });
       vd.addEventListener("change", () => {
-        if (vd.value === "Não" && st.value !== "Contato inválido" && confirm("Sem contato válido. Mudar o status para \"Contato inválido\"?")) {
-          st.value = "Contato inválido"; st.dispatchEvent(new Event("change"));
-        }
+        if (vd.value === "Não" && st.value !== "Contato inválido") confirmar({ titulo: "Sem contato válido", texto: "Mudar o status para Contato inválido?", botao: "Mudar para Contato inválido" }).then(ok => {
+          if (ok) { st.value = "Contato inválido"; st.dispatchEvent(new Event("change")); }
+        });
       });
 
       // Motivo de Sem interesse e "tentar de novo".
@@ -913,13 +1053,13 @@
           lista.querySelectorAll("[data-editar]").forEach(a => a.addEventListener("click", async (ev) => {
             ev.preventDefault();
             const h = hs.find(x => x.id === a.dataset.editar);
-            const novo = prompt("Editar observação:", h.texto);
-            if (novo === null || !novo.trim() || novo.trim() === h.texto) return;
+            const novo = await confirmar({ titulo: "Editar observação", texto: "Dá para editar no mesmo dia em que foi escrita.", botao: "Salvar", campo: h.texto });
+            if (!novo || !novo.trim() || novo.trim() === h.texto) return;
             try { await API.editarObservacao(id, h.id, novo.trim()); carregarHist(); } catch (e) { aviso(API.traduzir(e), true); }
           }));
           lista.querySelectorAll("[data-excluir]").forEach(a => a.addEventListener("click", async (ev) => {
             ev.preventDefault();
-            if (!confirm("Excluir esta observação?")) return;
+            if (!(await confirmar({ titulo: "Excluir esta observação?", texto: "Ela sai do histórico do lead.", botao: "Excluir", perigo: true }))) return;
             try { await API.excluirObservacao(id, a.dataset.excluir); carregarHist(); } catch (e) { aviso(API.traduzir(e), true); }
           }));
         } catch (e) { lista.innerHTML = `<p class="sub">${esc(API.traduzir(e))}</p>`; }
@@ -927,9 +1067,10 @@
       carregarHist();
 
       j.querySelector("#l-add-obs").addEventListener("click", async (ev) => {
-        const t = j.querySelector("#l-obs").value.trim();
+        const t = j.querySelector("#l-obs").value.trim(), bt = ev.currentTarget;
         if (!t) return;
-        try { await ocupado(ev.currentTarget, () => API.registrar(id, "observacao", t)); j.querySelector("#l-obs").value = ""; carregarHist(); }
+        if (!(await confirmar({ titulo: "Adicionar esta observação?", texto: "Ela fica no histórico do lead. Dá para editar ou excluir só hoje.", botao: "Adicionar" }))) return;
+        try { await ocupado(bt, () => API.registrar(id, "observacao", t)); j.querySelector("#l-obs").value = ""; carregarHist(); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
 
@@ -1012,8 +1153,9 @@
         else if (d.telErrado) {
           const atual = new Set(l.tel_errados || []);
           if (atual.has(d.telErrado)) atual.delete(d.telErrado);
-          else if (!confirm(`Marcar ${foneTxt(d.telErrado)} como número errado? Ele fica riscado para toda a unidade.`)) return;
+          else if (!(await confirmar({ titulo: `Marcar ${foneTxt(d.telErrado)} como número errado?`, texto: "Ele fica riscado para toda a unidade e registrado no histórico.", botao: "Marcar como errado", perigo: true }))) return;
           else atual.add(d.telErrado);
+          if (!atual.has(d.telErrado) && (l.tel_errados || []).includes(d.telErrado) && !(await confirmar({ titulo: `Voltar ${foneTxt(d.telErrado)} para a lista?`, botao: "Voltar para a lista" }))) return;
           try { await API.atualizarLead(id, { tel_errados: [...atual] }); await carregar(); desenhar(); janelaLead(id, { telTodos: true }); }
           catch (e) { aviso(API.traduzir(e), true); }
         }
@@ -1040,8 +1182,10 @@
         ["motivo", "motivo_outro", "tentar_em", "retorno", "retorno_hora", "lembrete", "volume", "destinos", "transportadora"].forEach(k => {
           if (k in dados && (dados[k] || "") === (l[k] || "")) delete dados[k];
         });
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Salvar ${l.empresa}?`, texto: `Status: ${esc(st.value)}${dados.retorno ? ` · próximo contato em ${data(dados.retorno)}` : ""}.`, botao: "Salvar" }))) return;
         try {
-          const novo = await ocupado(ev.currentTarget, () => API.atualizarLead(id, dados));
+          const novo = await ocupado(bt, () => API.atualizarLead(id, dados));
           Object.assign(l, novo); fechar();
           await aposMudarLead(st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.");
         } catch (e) { aviso(API.traduzir(e), true); }
@@ -1122,9 +1266,14 @@
     const ordem = (l) => (l.retorno && l.retorno < hoje ? "0" : "1") + (l.retorno || l.tentar_em || "") + (l.retorno_hora || "99:99");
     const lista = leadsU().filter(paraHoje).sort((a, b) => ordem(a).localeCompare(ordem(b)));
     if (!lista.length) return `<section class="hoje hoje-vazio"><b>Para hoje</b><span>Nenhum contato marcado para hoje. Na ficha de cada lead, use “Próximo contato” para montar sua agenda.</span></section>`;
+    // Cartões ou Lista: a pessoa escolhe; sem escolha, com mais de 3 contatos abre em Lista.
+    let salva = null; try { salva = localStorage.getItem("portal-vista-hoje"); } catch (e) { /* ignora */ }
+    const emLista = (E.vistaHoje || salva || (lista.length > 3 ? "lista" : "cartoes")) === "lista";
     return `<section class="hoje" aria-label="Para hoje">
-      <h2>Para hoje <span class="qtd-hoje">${lista.length} contato${lista.length > 1 ? "s" : ""}</span></h2>
-      <div class="hoje-lista">${lista.map(l => {
+      <div class="hoje-topo"><h2>Para hoje <span class="qtd-hoje">${lista.length} contato${lista.length > 1 ? "s" : ""}</span></h2>
+        <div class="pilulas pilulas-mini" role="group" aria-label="Forma de ver o Para hoje">
+          <button data-vista-hoje="cartoes" aria-pressed="${!emLista}">Cartões</button><button data-vista-hoje="lista" aria-pressed="${emLista}">Lista</button></div></div>
+      <div class="hoje-lista${emLista ? " em-lista" : ""}">${lista.map(l => {
         const atrasado = l.retorno && l.retorno < hoje;
         const rotuloDia = retornoDevido(l)
           ? (atrasado ? `Atrasado desde ${data(l.retorno)}` : `Hoje${l.retorno_hora ? ", " + esc(l.retorno_hora) : ", sem horário"}`)
@@ -1233,10 +1382,12 @@
         const erro = j.querySelector("#p-erro");
         const u = unidade();
         if (!escolhidos.length) { erro.textContent = "Escolha pelo menos um segmento."; erro.hidden = false; return; }
-        const cidades = ["#p-c1", "#p-c2", "#p-c3"].map(x => j.querySelector(x).value.trim()).filter(Boolean);
+        const cidades = ["#p-c1", "#p-c2", "#p-c3"].map(x => cidadeUf(j.querySelector(x).value)).filter(Boolean);
         const empresas = j.querySelector("#p-emp").value.trim();
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: "Enviar este pedido de leads?", texto: `Unidade ${esc(rotulo(u.sigla))} · ${esc(escolhidos.join(", "))}. Depois de enviado, um novo pedido só depois de tratar os leads desta base.`, botao: "Enviar pedido" }))) return;
         try {
-          const r = await ocupado(ev.currentTarget, () => API.criarPedido({ sigla: u.sigla, regiao: u.regiao, cidade_uf: u.cidade_uf, segmentos: escolhidos.slice(), cidades, empresas: empresas || null }));
+          const r = await ocupado(bt, () => API.criarPedido({ sigla: u.sigla, regiao: u.regiao, cidade_uf: u.cidade_uf, segmentos: escolhidos.slice(), cidades, empresas: empresas || null }));
           await recarregar();
           const nEmp = empresas ? empresas.split("\n").filter(x => x.trim()).length : 0;
           abrir(`
@@ -1269,10 +1420,12 @@
       j.querySelector("#u-enviar").addEventListener("click", async (ev) => {
         const erro = j.querySelector("#u-erro");
         const sigla = j.querySelector("#u-sigla").value.trim().toUpperCase();
-        const cidade = j.querySelector("#u-cidade").value.trim(), regiao = j.querySelector("#u-regiao").value;
+        const cidade = cidadeUf(j.querySelector("#u-cidade").value), regiao = j.querySelector("#u-regiao").value;
         if (!/^[A-Z0-9]{2,10}$/.test(sigla) || !cidade || !regiao) { erro.textContent = "Preencha a sigla (2 a 10 letras ou números), a cidade e a região."; erro.hidden = false; return; }
         if ((E.perfil.unidades || []).some(u => u.sigla === sigla)) { erro.textContent = "Você já tem essa unidade no seu cadastro."; erro.hidden = false; return; }
-        try { await ocupado(ev.currentTarget, () => API.pedirUnidade({ sigla, cidade_uf: cidade, regiao })); fechar(); E.perfil = await API.meuPerfil(); desenhar(); aviso("Pedido de acesso enviado ao time."); }
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Pedir acesso à unidade ${sigla}?`, texto: `${esc(cidade)} · ${esc(regiao)}. O time de ${esc(TIME)} confere e libera.`, botao: "Pedir acesso" }))) return;
+        try { await ocupado(bt, () => API.pedirUnidade({ sigla, cidade_uf: cidade, regiao })); fechar(); E.perfil = await API.meuPerfil(); desenhar(); aviso("Pedido de acesso enviado ao time."); }
         catch (e) { erro.textContent = API.traduzir(e); erro.hidden = false; }
       });
     });
@@ -1360,7 +1513,8 @@
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="pt-salvar">Salvar</button></div>`,
     (j) => {
-      const salvar = async (dados, msg, botao) => {
+      const salvar = async (dados, msg, botao, pergunta) => {
+        if (!(await confirmar(pergunta))) return;
         try { await ocupado(botao, () => API.atualizarPedido(p.id, dados)); await recarregar(); aviso(msg); janelaPedidoTime(p.id); }
         catch (e) { aviso(API.traduzir(e), true); }
       };
@@ -1370,15 +1524,16 @@
         if (sit === "Enviada" && !p.enviada_em) dados.enviada_em = true;
         if (["Enviada", "Concluída"].includes(sit) && !ls.length) { aviso("Importe os leads antes de marcar como Enviada.", true); return; }
         if (sit === "Concluída" && ls.some(trava)) { aviso("Ainda há leads em Novo ou Prospecção. A situação muda sozinha quando a unidade atualizar todos.", true); return; }
-        salvar(dados, "Pedido salvo.", ev.currentTarget);
+        salvar(dados, "Pedido salvo.", ev.currentTarget, { titulo: `Salvar o pedido ${p.id}?`, texto: `Situação: ${esc(sit)}.${dados.responsavel ? ` Responsável: ${esc(dados.responsavel)}.` : ""}`, botao: "Salvar" });
       });
       const assumir = j.querySelector("#pt-assumir");
-      if (assumir) assumir.addEventListener("click", (ev) => salvar({ situacao: "Em extração", responsavel: p.responsavel || E.perfil.nome }, "Pedido assumido.", ev.currentTarget));
+      if (assumir) assumir.addEventListener("click", (ev) => salvar({ situacao: "Em extração", responsavel: p.responsavel || E.perfil.nome }, "Pedido assumido.", ev.currentTarget, { titulo: `Assumir o pedido ${p.id}?`, texto: `Você passa a ser o responsável e o pedido vai para Em extração.`, botao: "Assumir pedido" }));
       j.querySelector("#pt-importar").addEventListener("click", () => janelaImportar(p.id));
       const apagar = j.querySelector("#pt-apagar");
       if (apagar) apagar.addEventListener("click", async (ev) => {
-        if (!confirm(`Apagar os ${ls.length} leads do pedido ${p.id}? Os status preenchidos pela unidade também serão apagados.`)) return;
-        try { await ocupado(ev.currentTarget, () => API.apagarLeadsDoPedido(p.id)); await recarregar(); aviso("Leads apagados."); janelaPedidoTime(p.id); }
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Apagar os ${ls.length} leads do pedido ${p.id}?`, texto: "Os status e o histórico preenchidos pela unidade também serão apagados. Não tem volta.", botao: "Apagar leads", perigo: true }))) return;
+        try { await ocupado(bt, () => API.apagarLeadsDoPedido(p.id)); await recarregar(); aviso("Leads apagados."); janelaPedidoTime(p.id); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
@@ -1539,8 +1694,10 @@
       enviar.disabled = !prontos.length;
       enviar.textContent = prontos.length ? `Enviar ${prontos.length} leads para ${rotulo(p.sigla)}` : "Enviar leads";
       enviar.onclick = async (ev) => {
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Enviar ${prontos.length} leads para ${rotulo(p.sigla)}?`, texto: "Eles aparecem na hora para a unidade e o pedido vai para Enviada.", botao: "Enviar leads" }))) return;
         try {
-          await ocupado(ev.currentTarget, () => API.incluirLeads(p.id, prontos, { situacao: "Enviada", responsavel: p.responsavel || E.perfil.nome, ...(p.enviada_em ? {} : { enviada_em: true }) }));
+          await ocupado(bt, () => API.incluirLeads(p.id, prontos, { situacao: "Enviada", responsavel: p.responsavel || E.perfil.nome, ...(p.enviada_em ? {} : { enviada_em: true }) }));
           await recarregar();
           const atualizado = E.pedidos.find(x => x.id === p.id);
           const link = zap(perfilDe(p.solicitante).celular, mensagemPedido(atualizado, "enviada"));
@@ -1641,7 +1798,7 @@
         </tbody></table></div></section>` : ""}
       <div class="filtros">
         <div class="pilulas" role="group" aria-label="Situação do cadastro">
-          ${[["pendente", "Aguardando"], ["aprovado", "Aprovados"], ["recusado", "Recusados"], ["excluido", "Excluídos"]].map(([v, r]) => `<button data-pilula="cadastro" data-valor="${v}" aria-pressed="${E.f.cadastro === v}">${r} (${contar(v)})</button>`).join("")}
+          ${[["pendente", "Aguardando"], ["aprovado", "Aprovados"], ["recusado", "Recusados"], ["excluido", "Inativos"]].map(([v, r]) => `<button data-pilula="cadastro" data-valor="${v}" aria-pressed="${E.f.cadastro === v}">${r} (${contar(v)})</button>`).join("")}
         </div>
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Nome, e-mail ou unidade"></div>
       </div>
@@ -1658,10 +1815,10 @@
               ${!siglaOk ? `<div class="sec" style="color:var(--danger)">A sigla não bate com o e-mail</div>` : ""}</td>
             <td>${esc(foneBonito(p.celular || ""))}</td>
             <td>${p.papel === "admin" ? "<b>Administrador</b><div class=\"sec\">Vê tudo e gerencia cadastros</div>" : p.papel === "time" ? "Time<div class=\"sec\">Vê e trabalha pedidos e leads</div>" : "Só as próprias unidades"}</td>
-            <td>${data(p.criadoEm)}${p.situacao === "excluido" ? `<div class="sec">Excluído${p.excluido_em ? " em " + data(p.excluido_em) : ""}${p.excluido_por ? " por " + esc(p.excluido_por) : ""}</div>` : ""}</td>
+            <td>${data(p.criadoEm)}${p.situacao === "excluido" ? `<div class="sec">Inativo desde ${p.excluido_em ? data(p.excluido_em) : "–"}${p.excluido_por ? " por " + esc(p.excluido_por) : ""}</div>` : ""}</td>
             <td><div class="acoes">
               ${!ehAdmin() ? (link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : `<span class="sec">–</span>`)
-              : p.situacao === "excluido" ? `<button class="btn btn-p" data-acao="reativar" data-id="${esc(p.id)}">Reativar</button>` : `
+              : p.situacao === "excluido" ? `<button class="btn btn-p" data-acao="reativar" data-id="${esc(p.id)}">Reativar</button><button class="btn btn-p btn-perigo-leve" data-acao="excluirDeVez" data-id="${esc(p.id)}">Excluir de vez</button>` : `
               ${p.situacao !== "aprovado" ? (p.cargo === "Inside Sales"
                 ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-papel="time" data-id="${esc(p.id)}">Aprovar como time</button><button class="btn btn-p" data-acao="aprovar" data-papel="admin" data-id="${esc(p.id)}">Aprovar como administrador</button>`
                 : `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>`) : ""}
@@ -1674,7 +1831,7 @@
               ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}
             </div></td></tr>`;
         }).join("")}</tbody></table></div>`
-      : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : E.f.cadastro === "excluido" ? "Nenhum cadastro excluído" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
+      : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : E.f.cadastro === "excluido" ? "Nenhum cadastro inativo" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
   }
 
   // Celular: só números, com DDD (tira o 55 do Brasil se vier).
@@ -1696,7 +1853,9 @@
       j.querySelector("#c-ok").addEventListener("click", async (ev) => {
         const cel = celularLimpo(j.querySelector("#c-cel").value), erro = j.querySelector("#c-erro");
         if (!cel) { erro.textContent = "Digite o celular com DDD, por exemplo (11) 91234-5678."; erro.hidden = false; return; }
-        try { await ocupado(ev.currentTarget, () => API.mudarMeuCelular(cel)); E.perfil.celular = cel; fechar(); aviso("Celular atualizado."); if (E.perfil.situacao === "aprovado" && (ehTime() || minhasUnidades().length)) desenhar(); else telaEspera(); }
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: "Salvar o celular novo?", texto: `${esc(foneBonito(cel))}. É por ele que o time avisa pelo WhatsApp.`, botao: "Salvar" }))) return;
+        try { await ocupado(bt, () => API.mudarMeuCelular(cel)); E.perfil.celular = cel; fechar(); aviso("Celular atualizado."); if (E.perfil.situacao === "aprovado" && (ehTime() || minhasUnidades().length)) desenhar(); else telaEspera(); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
@@ -1721,12 +1880,15 @@
         if (nome !== p.nome) dados.nome = nome;
         if (cel !== p.celular) dados.celular = cel;
         if (!Object.keys(dados).length) { fechar(); return; }
-        try { await ocupado(ev.currentTarget, () => API.atualizarPerfil(id, dados)); fechar(); await recarregar(); aviso("Dados atualizados."); }
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: `Salvar os dados de ${p.nome}?`, texto: [dados.nome && `Nome: ${esc(dados.nome)}`, dados.celular && `Celular: ${esc(foneBonito(dados.celular))}`].filter(Boolean).join(" · "), botao: "Salvar" }))) return;
+        try { await ocupado(bt, () => API.atualizarPerfil(id, dados)); fechar(); await recarregar(); aviso("Dados atualizados."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
   }
 
+  // Excluir cadastro: deixar inativo (dá para reativar) ou excluir de vez (some do portal).
   function janelaExcluir(id) {
     const p = E.perfis.find(x => x.id === id);
     const us = E.acessos.filter(a => a.uid === id).map(a => rotulo(a.sigla));
@@ -1734,17 +1896,31 @@
     abrir(`
       <div class="janela-topo"><div><h2>Excluir cadastro</h2><p>${esc(p.nome)} · ${esc(p.email)}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
-        <p><b>Sai do portal:</b> o cadastro da pessoa e o acesso ${us.length ? "a " + esc(us.join(", ")) : "às unidades"}. Ela não consegue mais ver nem mexer em nada.</p>
-        <p><b>Continua salvo:</b> ${qtd === 1 ? "o pedido dessas unidades, com" : qtd ? `os ${qtd} pedidos dessas unidades, com` : "os pedidos,"} os leads e todo o histórico. Outra pessoa da mesma unidade continua vendo tudo.</p>
-        <p class="sub">O cadastro vai para a aba <b>Excluídos</b>, com a data e quem excluiu. Se a pessoa voltar, use <b>Reativar</b> e aprove de novo.</p>
+        <p>A pessoa perde o acesso ${us.length ? "a " + esc(us.join(", ")) : "às unidades"} e não consegue mais ver nem mexer em nada. Escolha como:</p>
+        <fieldset class="opcoes-excluir"><legend class="sr">Como excluir</legend>
+          <label class="opcao-excluir"><input type="radio" name="x-modo" value="inativo" checked>
+            <span><b>Deixar inativo</b><span class="sub">O cadastro fica na aba Inativos, com a data e quem desativou. Dá para reativar depois.</span></span></label>
+          <label class="opcao-excluir"><input type="radio" name="x-modo" value="de-vez">
+            <span><b>Excluir de vez</b><span class="sub">O cadastro e os acessos somem do portal e não aparecem em nenhuma aba. Não tem volta.</span></span></label>
+        </fieldset>
+        <p class="sub"><b>Nos dois casos continua salvo:</b> ${qtd === 1 ? "o pedido dessas unidades, com" : qtd ? `os ${qtd} pedidos dessas unidades, com` : "os pedidos,"} os leads e todo o histórico. O login no Firebase continua existindo; para bloquear de vez, exclua em Authentication.</p>
       </div>
-      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-perigo" id="x-ok">Excluir cadastro</button></div>`,
+      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-perigo" id="x-ok">Continuar</button></div>`,
     (j) => {
       j.querySelector("#x-ok").addEventListener("click", async (ev) => {
-        try { await ocupado(ev.currentTarget, () => API.excluirCadastro(id)); fechar(); await recarregar(); aviso("Cadastro excluído. Ele fica na aba Excluídos; os pedidos e leads continuam salvos."); }
+        const modo = j.querySelector("input[name=x-modo]:checked").value, bt = ev.currentTarget;
+        if (modo === "de-vez") { fechar(); return excluirDeVez(id); }
+        if (!(await confirmar({ titulo: `Deixar ${p.nome} inativo?`, texto: "A pessoa perde o acesso. O cadastro fica na aba Inativos e dá para reativar depois.", botao: "Deixar inativo", perigo: true }))) return;
+        try { await ocupado(bt, () => API.excluirCadastro(id)); fechar(); await recarregar(); aviso("Cadastro inativo. Ele fica na aba Inativos; os pedidos e leads continuam salvos."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
+  }
+  async function excluirDeVez(id) {
+    const p = E.perfis.find(x => x.id === id);
+    if (!(await confirmar({ titulo: `Excluir ${p.nome} de vez?`, texto: `O cadastro e os acessos de <b>${esc(p.email)}</b> somem do portal e não dá para desfazer. Os pedidos, leads e histórico continuam salvos.`, botao: "Excluir de vez", perigo: true }))) return;
+    try { await API.excluirDeVez(id); await recarregar(); aviso("Cadastro excluído de vez."); }
+    catch (e) { aviso(API.traduzir(e), true); }
   }
 
   // Senha esquecida: o e-mail de redefinição pode ser barrado pela Azul, então o time tem um caminho manual.
@@ -1757,14 +1933,16 @@
         <p><b>2. Se não chegar:</b></p>
         <ol style="margin:0 0 10px 20px;line-height:1.6">
           <li>No Firebase, abra <b>Authentication › Usuários</b>, procure <b>${esc(p.email)}</b> e use <b>⋮ › Excluir conta</b>.</li>
-          <li>Aqui no portal, clique em <b>Excluir cadastro</b> nesta pessoa. Os pedidos, leads e histórico continuam salvos.</li>
+          <li>Aqui no portal, clique em <b>Excluir cadastro › Excluir de vez</b> nesta pessoa. Os pedidos, leads e histórico continuam salvos.</li>
           <li>Peça para a pessoa criar o acesso de novo, com o mesmo e-mail e uma senha nova, e aprove.</li>
         </ol>
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="x-link">Enviar o link</button></div>`,
     (j) => {
       j.querySelector("#x-link").addEventListener("click", async (ev) => {
-        try { await ocupado(ev.currentTarget, () => API.enviarRedefinicao(p.email)); aviso("Link enviado. Se não chegar, siga o passo 2."); }
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: "Enviar o link de nova senha?", texto: `Vai para ${esc(p.email)}. Se o e-mail da Azul bloquear, siga o passo 2.`, botao: "Enviar link" }))) return;
+        try { await ocupado(bt, () => API.enviarRedefinicao(p.email)); aviso("Link enviado. Se não chegar, siga o passo 2."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
     });
@@ -1876,6 +2054,7 @@
         const a = document.getElementById("n-senha").value, b = document.getElementById("n-senha2").value;
         if (a.length < 8) return aviso("A senha precisa ter pelo menos 8 caracteres.", true);
         if (a !== b) return aviso("As senhas não são iguais.", true);
+        if (!(await confirmar({ titulo: "Trocar a sua senha?", texto: "Na próxima vez, entre com a senha nova.", botao: "Trocar senha" }))) return;
         try { await ocupado(f.querySelector("button"), () => API.trocarSenha(a)); f.reset(); aviso("Senha alterada."); }
         catch (e) { aviso(API.traduzir(e), true); }
       });
@@ -1892,7 +2071,7 @@
           </dl>
           ${!ehTime() ? `<h2 style="margin-top:18px">Minhas unidades</h2>
             <div class="tabela-wrap"><table><thead><tr><th>Unidade</th><th>Cidade/UF</th><th>Região</th><th>Situação</th></tr></thead><tbody>
-            ${us.map(u => `<tr><td><b>${esc(rotulo(u.sigla))}</b>${u.principal ? "" : " (extra)"}</td><td>${esc(u.cidade_uf || "")}</td><td>${esc(u.regiao || "")}</td><td>${u.acesso === "aprovado" ? "Liberada" : u.acesso === "recusado" ? "Não liberada" : "Aguardando o time"}</td></tr>`).join("")}
+            ${us.map(u => `<tr><td><b>${esc(rotulo(u.sigla))}</b>${u.principal ? "" : " (extra)"}</td><td>${esc(u.cidade_uf || "")}</td><td>${esc(u.regiao || "")}</td><td>${u.acesso === "aprovado" ? "Liberada" : u.acesso === "recusado" ? `Não liberada <button class="link-mini" data-acao="pedirDeNovo" data-sigla="${esc(u.sigla)}">Pedir de novo</button>` : "Aguardando o time"}</td></tr>`).join("")}
             </tbody></table></div>
             ${us.length < MAX_UNID ? `<button class="btn" style="margin-top:12px" data-acao="pedirUnidade">+ Pedir acesso a outra unidade</button>` : ""}` : ""}
         </section>

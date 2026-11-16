@@ -140,8 +140,12 @@ service cloud.firestore {
             || existsAfter(/databases/$(database)/documents/unidades/$(request.resource.data.sigla)))
           && request.resource.data.criadoEm == request.time)
         || ehAdmin();
-      allow update: if ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
-        && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'];
+      allow update: if (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+          && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado'])
+        // quem teve a unidade recusada pode pedir de novo (volta para aguardando)
+        || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao == 'recusado'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['situacao'])
+          && request.resource.data.situacao == 'pendente');
       allow delete: if ehAdmin() || (logado() && resource.data.uid == request.auth.uid && resource.data.situacao != 'aprovado');
     }
 
