@@ -45,7 +45,8 @@ service cloud.firestore {
     // Campos que o representante pode mudar em um lead.
     function camposDoRep() {
       return ['status', 'data_contato', 'contato_valido', 'atualizado_em', 'retorno', 'retorno_hora', 'lembrete', 'tentativas',
-              'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora', 'tel_errados'];
+              'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora', 'tel_errados',
+              'contatos_ok', 'contatos_nao'];
     }
     function motivosPerda() { return ['', 'Já usa outra transportadora', 'Achou o preço alto', 'Não faz envios', 'Sem volume agora', 'Decisor não atende', 'Outro motivo']; }
     function dataOuVazio(v) { return v == null || (v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))); }
@@ -179,6 +180,9 @@ service cloud.firestore {
         && textoOuNulo(novo.get('transportadora', ''), 120)
         && novo.get('motivo', '') in motivosPerda()
         && novo.get('tel_errados', []) is list && novo.get('tel_errados', []).size() <= 80
+        // ✓ Funciona / ✕ Não funciona em cada telefone ou e-mail
+        && novo.get('contatos_ok', []) is list && novo.get('contatos_ok', []).size() <= 150
+        && novo.get('contatos_nao', []) is list && novo.get('contatos_nao', []).size() <= 150
         && novo.get('tentativas', 0) is int
         && (novo.get('tentativas', 0) == velho.get('tentativas', 0) || novo.get('tentativas', 0) == velho.get('tentativas', 0) + 1);
     }
@@ -203,7 +207,7 @@ service cloud.firestore {
 
       allow create: if (ehTime() || usaUnidade(request.resource.data.sigla))
         && request.resource.data.keys().hasOnly(['sigla', 'regiao', 'cidade_uf', 'solicitante', 'solicitante_nome', 'segmentos', 'cidades', 'empresas',
-             'situacao', 'previsao', 'responsavel', 'observacao_time', 'leads', 'liberada', 'travando', 'alterado', 'criada_em', 'enviada_em', 'concluida_em'])
+             'situacao', 'previsao', 'responsavel', 'responsavel_uid', 'responsavel_cel', 'observacao_time', 'leads', 'liberada', 'travando', 'alterado', 'criada_em', 'enviada_em', 'concluida_em'])
         && request.resource.data.solicitante == request.auth.uid
         && request.resource.data.situacao == 'Nova'
         && request.resource.data.segmentos is list && request.resource.data.segmentos.size() >= 1 && request.resource.data.segmentos.size() <= 3
@@ -255,6 +259,17 @@ service cloud.firestore {
         allow delete: if aprovado() && resource.data.tipo == 'observacao' && resource.data.autor == request.auth.uid
           && mesmoDia(resource.data.criado_em);
       }
+    }
+
+    // ---------- carteiras do time (quem cuida de cada região) ----------
+    // Todo mundo aprovado lê (o representante vê quem cuida da unidade dele); só o administrador muda.
+    match /config/carteiras {
+      allow read: if aprovado();
+      allow write: if ehAdmin()
+        && request.resource.data.keys().hasOnly(['regioes', 'substituto', 'atualizado_em', 'atualizado_por'])
+        && request.resource.data.regioes is map
+        && request.resource.data.regioes.keys().hasOnly(regioes())
+        && request.resource.data.atualizado_em == request.time;
     }
 
     // Qualquer outro caminho fica fechado.

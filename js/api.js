@@ -122,8 +122,18 @@
     if (dados.status && dados.status !== antes.status) ev.push(["status", `Status: ${antes.status} → ${dados.status}${extraMotivo}`]);
     else if (depois.status === "Sem interesse" && (depois.motivo !== antes.motivo || depois.motivo_outro !== antes.motivo_outro || depois.tentar_em !== antes.tentar_em) && depois.motivo)
       ev.push(["status", `Sem interesse${extraMotivo}`]);
-    if (dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) ev.push(["contato_valido", `Tem contato válido? ${dados.contato_valido}`]);
-    if (dados.tel_errados) {
+    const marcando = dados.contatos_ok !== undefined || dados.contatos_nao !== undefined;
+    if (!marcando && dados.contato_valido !== undefined && dados.contato_valido !== antes.contato_valido && dados.contato_valido) ev.push(["contato_valido", `Tem contato válido? ${dados.contato_valido}`]);
+    if (marcando) {
+      // ✓ / ✕ em cada contato: registra só o que mudou.
+      const nome = (c) => /^\d+$/.test(c) ? foneTexto(c) : c;
+      const okA = new Set(antes.contatos_ok || []), naoA = new Set([...(antes.contatos_nao || []), ...(antes.tel_errados || [])]);
+      const okN = new Set(dados.contatos_ok || []), naoN = new Set(dados.contatos_nao || []);
+      okN.forEach(c => { if (!okA.has(c)) ev.push(["contato_valido", `Contato funciona: ${nome(c)}`]); });
+      naoN.forEach(c => { if (!naoA.has(c)) ev.push(["contato_valido", `Contato não funciona: ${nome(c)}`]); });
+      [...okA, ...naoA].forEach(c => { if (!okN.has(c) && !naoN.has(c)) ev.push(["contato_valido", `Marcação retirada: ${nome(c)}`]); });
+    }
+    if (dados.tel_errados && !marcando) {
       const velhos = new Set(antes.tel_errados || []), novos = new Set(dados.tel_errados);
       dados.tel_errados.filter(n => !velhos.has(n)).forEach(n => ev.push(["telefone", `Número errado: ${foneTexto(n)}`]));
       [...velhos].filter(n => !novos.has(n)).forEach(n => ev.push(["telefone", `Número voltou para a lista: ${foneTexto(n)}`]));
@@ -304,8 +314,8 @@
       observar(siglas, aoMudar) {
         const u = auth.currentUser; if (!u) return () => {};
         const consultas = siglas
-          ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg))]
-          : [db.collection("pedidos"), db.collection("perfis"), db.collection("acessos"), db.collection("unidades")];
+          ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg)), ...(siglas.length ? [db.doc("config/carteiras")] : [])]
+          : [db.collection("pedidos"), db.collection("perfis"), db.collection("acessos"), db.collection("unidades"), db.doc("config/carteiras")];
         const primeira = new Set();
         const saidas = consultas.map((q, i) => q.onSnapshot({ includeMetadataChanges: false }, (snap) => {
           if (!primeira.has(i)) { primeira.add(i); return; } // a primeira leitura é a que a tela já tem
@@ -322,7 +332,8 @@
         const lote = db.batch();
         lote.set(ref, { sigla: dados.sigla, regiao: dados.regiao || null, cidade_uf: dados.cidade_uf || null, solicitante: u.uid, solicitante_nome: cacheNome,
           segmentos: dados.segmentos, cidades: dados.cidades, empresas: dados.empresas || null, situacao: "Nova", previsao: proximaSexta(),
-          responsavel: null, observacao_time: null, leads: {}, liberada: false, travando: 0, alterado: null, criada_em: TS(), enviada_em: null, concluida_em: null });
+          responsavel: dados.responsavel || null, responsavel_uid: dados.responsavel_uid || null, responsavel_cel: dados.responsavel_cel || null,
+          observacao_time: null, leads: {}, liberada: false, travando: 0, alterado: null, criada_em: TS(), enviada_em: null, concluida_em: null });
         lote.update(db.doc("unidades/" + dados.sigla), { pedidoAtual: ref.id });
         await lote.commit();
         return { id: ref.id, previsao: proximaSexta() };
@@ -332,6 +343,12 @@
         ["enviada_em", "concluida_em"].forEach(k => { if (d[k] === true) d[k] = TS(); });
         await db.doc("pedidos/" + id).update(d);
       },
+      // Carteiras do time: quem cuida de cada região (null = livre, quem puxar fica com o pedido).
+      async carteiras() {
+        try { const d = await db.doc("config/carteiras").get(); return d.exists ? d.data() : { regioes: {}, substituto: null }; }
+        catch (e) { return { regioes: {}, substituto: null }; }
+      },
+      async salvarCarteiras(dados) { await db.doc("config/carteiras").set({ regioes: dados.regioes, substituto: dados.substituto || null, atualizado_em: TS(), atualizado_por: cacheNome }); },
 
       // Time: coloca os leads da planilha dentro do pedido (máximo de 10 por pedido).
       async incluirLeads(pedidoId, linhas, extra) {
@@ -431,7 +448,9 @@
         { id: "r2_CWB", uid: "r2", sigla: "CWB", situacao: "aprovado", principal: true, nome: "Paulo Modelo", email: "cwb.paulo@voeazul.com.br" },
         { id: "r3_REC", uid: "r3", sigla: "REC", situacao: "pendente", principal: true, nome: "Ana Teste", email: "rec.ana@voeazul.com.br" }
       ],
-      pedidos: [], historico: []
+      pedidos: [], historico: [],
+      // Carteiras de exemplo: Sudeste com o administrador, Sul e Centro Oeste com a Van, Norte e Nordeste livres.
+      carteiras: { regioes: { "Sudeste": { uid: "t1", nome: "Time Inside Sales", celular: "11900000000" }, "Sul": { uid: "t2", nome: "Van Exemplo", celular: "11900000009" }, "Centro Oeste": { uid: "t2", nome: "Van Exemplo", celular: "11900000009" }, "Nordeste": null, "Norte": null }, substituto: null }
     };
     let usuario = null, seq = 1;
     const nomes = ["Tecidos Vale Verde", "Malharia Horizonte", "Confecção Primavera", "Uniformes Atlântico", "Moda Rio Claro", "Têxtil Serra Azul", "Bordados Santa Luzia", "Jeans Paulínia"];
@@ -548,11 +567,14 @@
         if (u.pedidoAtual && !pedidoLiberado(u.pedidoAtual)) negar();
         const id = dados.sigla + "-" + (db.pedidos.filter(p => p.sigla === dados.sigla).length + 1);
         db.pedidos.push({ id, sigla: dados.sigla, regiao: dados.regiao, cidade_uf: dados.cidade_uf, solicitante: usuario.id, solicitante_nome: eu().nome,
-          segmentos: dados.segmentos, cidades: dados.cidades, empresas: dados.empresas || null, situacao: "Nova", previsao: proximaSexta(), responsavel: null,
+          segmentos: dados.segmentos, cidades: dados.cidades, empresas: dados.empresas || null, situacao: "Nova", previsao: proximaSexta(),
+          responsavel: dados.responsavel || null, responsavel_uid: dados.responsavel_uid || null, responsavel_cel: dados.responsavel_cel || null,
           observacao_time: null, leads: {}, liberada: false, travando: 0, alterado: null, criada_em: new Date().toISOString(), enviada_em: null, concluida_em: null });
         u.pedidoAtual = id;
         return { id, previsao: proximaSexta() };
       },
+      async carteiras() { return copia(db.carteiras); },
+      async salvarCarteiras(dados) { await espera(); if (!ehAdmin()) negar(); db.carteiras = { regioes: dados.regioes, substituto: dados.substituto || null, atualizado_em: new Date().toISOString(), atualizado_por: eu().nome }; },
       async atualizarPedido(id, dados) {
         if (!ehTime()) negar();
         const d = { ...dados };
