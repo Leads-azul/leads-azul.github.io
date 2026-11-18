@@ -35,6 +35,33 @@ window.LISTAS = {
     emailRetomada: "Olá{contato}, tudo bem?\n\nTe escrevi há alguns dias sobre os envios da {empresa}.\nSe fizer sentido, me diga um bom horário para uma conversa rápida, de 5 minutos, ou com quem devo falar sobre os envios da empresa.\n\nAbraço,\n{nome}\nAzul Logística, unidade {sigla} · {celular}"
   },
 
+  // Modelos de abordagem: a pessoa escolhe na hora de mandar o WhatsApp ou o e-mail e ainda pode editar o texto.
+  // Mesmas variáveis das mensagens acima. "dica" aparece embaixo do texto.
+  modelos: [
+    { id: "primeiro", nome: "Primeiro contato" },
+    { id: "retomada", nome: "Retomada (sem resposta)" },
+    { id: "ligacao", nome: "Depois da ligação",
+      whatsapp: "Olá{contato}! Aqui é {nome}, da Azul Logística ({cidade}). Obrigado pela conversa de agora há pouco.\nComo combinamos, sigo por aqui com as informações sobre os envios da {empresa}.\nSe puder, me mande o volume médio de envios por mês e os principais destinos, que eu preparo uma cotação.",
+      emailAssunto: "Conforme conversamos: envios da {empresa}",
+      email: "Olá{contato}, tudo bem?\n\nObrigado pela conversa por telefone. Como combinamos, sigo por aqui com as informações sobre os envios da {empresa}.\n\nPara preparar uma cotação, me passe por favor:\n- volume médio de envios por mês;\n- principais destinos;\n- tipo de carga (tamanho e peso aproximados).\n\nAbraço,\n{nome}\nAzul Logística, unidade {sigla} · {celular}",
+      dica: "Use logo depois da ligação, enquanto a conversa está fresca." },
+    { id: "cotacao", nome: "Envio de cotação",
+      whatsapp: "Olá{contato}! Aqui é {nome}, da Azul Logística.\nSegue a cotação para os envios da {empresa}, conforme o volume e os destinos que você me passou.\nFico à disposição para ajustar o que for preciso. Podemos falar amanhã para tirar dúvidas?",
+      emailAssunto: "Cotação Azul Logística para a {empresa}",
+      email: "Olá{contato}, tudo bem?\n\nSegue em anexo a cotação para os envios da {empresa}, conforme o volume e os destinos que conversamos.\n\nFico à disposição para ajustar o que for preciso. Posso te ligar amanhã para tirar dúvidas?\n\nAbraço,\n{nome}\nAzul Logística, unidade {sigla} · {celular}",
+      dica: "Lembre de anexar a cotação antes de enviar. Depois, marque o próximo contato para cobrar o retorno." },
+    { id: "responsavel", nome: "Pedir o responsável",
+      whatsapp: "Olá! Aqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nGostaria de falar com a pessoa que cuida dos envios ou da logística da {empresa}.\nVocê pode me passar o nome e o melhor contato dela? Obrigado!",
+      emailAssunto: "Contato do responsável pelos envios da {empresa}",
+      email: "Olá, tudo bem?\n\nAqui é {nome}, da Azul Logística (unidade {sigla}, {cidade}).\nGostaria de falar com a pessoa que cuida dos envios ou da logística da {empresa}.\n\nVocê pode me passar o nome e o melhor contato dela?\n\nObrigado!\n{nome}\nAzul Logística · {celular}",
+      dica: "Quando conseguir o nome, anote no lembrete do próximo contato." },
+    { id: "reativacao", nome: "Reativação",
+      whatsapp: "Olá{contato}, tudo bem? Aqui é {nome}, da Azul Logística em {cidade}.\nConversamos há alguns meses sobre os envios da {empresa}. Como estão as coisas por aí?\nTemos novidades de prazos e destinos e gostaria de te mostrar. Podemos marcar uma conversa rápida?",
+      emailAssunto: "Novidades da Azul Logística para a {empresa}",
+      email: "Olá{contato}, tudo bem?\n\nConversamos há alguns meses sobre os envios da {empresa}. Como estão as coisas por aí?\n\nTemos novidades de prazos e destinos e gostaria de te mostrar. Podemos marcar uma conversa rápida, de 5 minutos?\n\nAbraço,\n{nome}\nAzul Logística, unidade {sigla} · {celular}",
+      dica: "Para o lead que volta de Sem interesse. Vale perguntar se o volume ou a transportadora mudaram." }
+  ],
+
   // Depois de quantas tentativas sem avanço o portal pede uma decisão sobre o lead.
   tentativasParaDecidir: 3,
 

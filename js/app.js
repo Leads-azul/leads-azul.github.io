@@ -156,6 +156,7 @@
   }
   const EMPRESA = cfg.empresa || "Azul Logística";
   const TIME = cfg.nomeDoTime || "Inside Sales";
+  const AUTORIA = `<span class="autoria">Desenvolvido por <b>Lucas de Oliveira Rocha</b><span class="sep-aut"> · </span><span class="nw">© ${new Date().getFullYear()}</span></span>`;
   const logo = (cls) => cfg.logoUrl ? `<img class="${cls || "logo"}" src="${esc(cfg.logoUrl)}" alt="${esc(EMPRESA)}">` : "";
   const ICONES = {
     pedido: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 16h5"/>',
@@ -284,6 +285,7 @@
       desenhar();
       ligarTempoReal();
       if (E.boasVindas) { aviso(`Bem-vindo! Seu acesso à unidade ${E.boasVindas} já está liberado.`); E.boasVindas = null; }
+      if (E.senhaNova) { aviso("Senha nova criada. Use ela nas próximas vezes que entrar."); E.senhaNova = false; }
       talvezTour();
     } catch (e) {
       $app.innerHTML = `<div class="carregando"><div class="vazio"><h2>Não foi possível abrir o portal</h2><p>${esc(API.traduzir(e))}</p><button class="btn btn-primario" onclick="location.reload()">Tentar de novo</button></div></div>`;
@@ -361,8 +363,35 @@
             <li><span class="n">2</span><span><b>Peça uma base</b>Até 3 segmentos e 3 cidades. São ${MAX} leads por pedido.</span></li>
             <li><span class="n">3</span><span><b>Trabalhe os contatos</b>Tire os leads de Novo e Prospecção para liberar a próxima base.</span></li>
           </ol>
-          <p class="rodape-lado">Ferramenta interna do time de ${esc(TIME)}. Este portal tem login próprio e não usa a senha da sua conta Azul.</p>
+          <p class="rodape-lado">Ferramenta interna do time de ${esc(TIME)}. Este portal tem login próprio e não usa a senha da sua conta Azul.${AUTORIA}</p>
         </section>`;
+
+  // Esqueci minha senha: o e-mail de redefinição não chega na caixa da Azul, então o caminho principal é pedir ao time pelo WhatsApp.
+  // O time refaz o acesso e manda um link para a pessoa criar a senha nova (veja janelaSenha).
+  const linkTime = (texto) => { const n = fone(cfg.whatsappTime || ""); return `https://wa.me/${n}?text=${encodeURIComponent(texto)}`; };
+  const msgEsqueci = (email) => `Olá! Esqueci minha senha do ${cfg.nomeDoPortal || "Portal de Leads"}. Meu e-mail de acesso é ${email || "(meu e-mail)"}. Pode refazer meu acesso, por favor?`;
+  function janelaEsqueci(emailDigitado) {
+    abrir(`
+      <div class="janela-topo"><div><h2>Esqueceu a senha?</h2><p>Sem problema. O time de ${esc(TIME)} resolve pelo WhatsApp.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo">
+        <ol class="passos-senha">
+          <li><span class="n">1</span><span>Confira o seu e-mail de acesso e clique em <b>Pedir pelo WhatsApp</b>. A mensagem já vai pronta.</span></li>
+          <li><span class="n">2</span><span>O time refaz o seu acesso e manda um <b>link</b> de volta.</span></li>
+          <li><span class="n">3</span><span>Abra o link, crie a senha nova e pronto: você entra direto, com seus leads e pedidos.</span></li>
+        </ol>
+        <div class="campo"><label for="es-email">E-mail de acesso</label><input id="es-email" type="email" autocomplete="email" placeholder="sigla.nome@voeazul.com.br" value="${esc(emailDigitado || "")}"></div>
+        <div class="erro-form" id="es-erro" hidden></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><a class="btn btn-zap" id="es-zap" href="#" target="_blank" rel="noopener">Pedir pelo WhatsApp</a></div>`,
+    (j) => {
+      const campo = j.querySelector("#es-email"), zapBt = j.querySelector("#es-zap"), erroEl = j.querySelector("#es-erro");
+      const atualizar = () => { zapBt.href = linkTime(msgEsqueci(campo.value.trim().toLowerCase())); erroEl.hidden = true; };
+      campo.addEventListener("input", atualizar); atualizar();
+      zapBt.addEventListener("click", (ev) => {
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(campo.value.trim())) { ev.preventDefault(); erroEl.textContent = "Digite o e-mail que você usa para entrar no portal."; erroEl.hidden = false; campo.focus(); }
+      });
+    });
+  }
 
   function telaAcesso(modo, erro, refazer) {
     const dominios = cfg.dominiosPermitidos || ["voeazul.com.br", "azulcargo.com.br"];
@@ -434,13 +463,7 @@
         try { await ocupado(fe.querySelector("button[type=submit]"), () => API.entrar(email, senha)); E.tela = null; iniciar(); }
         catch (e) { erroEl.textContent = API.traduzir(e); erroEl.hidden = false; }
       });
-      document.getElementById("b-esqueci").addEventListener("click", async (ev) => {
-        const email = document.getElementById("e-email").value.trim();
-        const erroEl = document.getElementById("e-erro");
-        if (!email) { erroEl.textContent = "Digite seu e-mail acima e clique de novo em \"Esqueci minha senha\"."; erroEl.hidden = false; return; }
-        try { await ocupado(ev.currentTarget, () => API.esqueciSenha(email)); aviso(`Se o e-mail tiver cadastro, enviamos um link para criar uma senha nova. Se não chegar em alguns minutos (veja também o lixo eletrônico), fale com o time de ${TIME}.`); }
-        catch (e) { erroEl.textContent = API.traduzir(e); erroEl.hidden = false; }
-      });
+      document.getElementById("b-esqueci").addEventListener("click", () => janelaEsqueci(document.getElementById("e-email").value.trim()));
     }
 
     const fc = document.getElementById("f-cadastro");
@@ -536,11 +559,12 @@
   // Convite do dono da unidade: a pessoa cria a senha e já entra liberada na unidade.
   const VALIDADE_CONVITE = 7;
   const conviteVencido = (c) => Date.now() - new Date(c.criado_em).getTime() > VALIDADE_CONVITE * DIA;
-  const linkConvite = (codigo) => urlPortal() + "?convite=" + encodeURIComponent(codigo);
+  const linkConvite = (codigo, novaSenha) => urlPortal() + "?convite=" + encodeURIComponent(codigo) + (novaSenha ? "&nova=1" : "");
   const tirarConviteDaUrl = () => { try { history.replaceState(null, "", location.pathname); } catch (e) { /* ignora */ } };
   async function telaConvite(codigo) {
     $app.innerHTML = `<div class="carregando"><p class="sub">Abrindo o convite…</p></div>`;
     const c = await API.lerConvite(codigo);
+    const nova = new URLSearchParams(location.search).get("nova") === "1";
     const sessao = await API.sessao().catch(() => null);
     const caixa = (html) => { $app.innerHTML = `<div class="acesso">${ladoAcesso()}<section class="acesso-form"><div class="acesso-caixa">${html}</div></section></div>`; };
     const irEntrar = () => { tirarConviteDaUrl(); E.tela = null; iniciar(); };
@@ -548,9 +572,10 @@
       caixa(`<h2>${titulo}</h2><p class="sub">${texto}</p><button class="btn btn-primario btn-largo" id="v-entrar">Ir para a entrada do portal</button>`);
       document.getElementById("v-entrar").onclick = async () => { if (sessao) await sair(); irEntrar(); };
     };
-    if (!c) return aviso1("Convite não encontrado", "O link pode ter sido cancelado ou copiado pela metade. Peça um novo link para o dono da sua unidade.");
-    if (c.usado) return aviso1("Este convite já foi usado", `O acesso de <b>${esc(c.email)}</b> já foi criado. Entre com esse e-mail e a senha que você escolheu.`);
-    if (conviteVencido(c)) return aviso1("Este convite venceu", `O link vale ${VALIDADE_CONVITE} dias. Peça um novo para ${esc(c.criado_por_nome || "o dono da unidade")}.`);
+    const quemPede = nova ? `o time de ${esc(TIME)}` : "o dono da sua unidade";
+    if (!c) return aviso1(nova ? "Link não encontrado" : "Convite não encontrado", `O link pode ter sido cancelado ou copiado pela metade. Peça um novo para ${quemPede}.`);
+    if (c.usado) return aviso1(nova ? "Este link já foi usado" : "Este convite já foi usado", `O acesso de <b>${esc(c.email)}</b> já foi criado. Entre com esse e-mail e a senha que você escolheu.`);
+    if (conviteVencido(c)) return aviso1(nova ? "Este link venceu" : "Este convite venceu", `O link vale ${VALIDADE_CONVITE} dias. Peça um novo para ${nova ? quemPede : esc(c.criado_por_nome || "o dono da unidade")}.`);
     if (sessao && sessao.email !== c.email) {
       caixa(`<h2>Você está conectado com outro e-mail</h2><p class="sub">Este convite é para <b>${esc(c.email)}</b>, mas o portal está aberto como <b>${esc(sessao.email)}</b>.</p>
         <button class="btn btn-primario btn-largo" id="v-trocar">Sair e continuar o convite</button>`);
@@ -558,9 +583,11 @@
       return;
     }
     caixa(`
-      <p class="selo selo-ok" style="margin:0 0 10px">Convite da unidade ${esc(c.sigla)}</p>
+      ${nova ? `<p class="selo selo-ok" style="margin:0 0 10px">Nova senha · unidade ${esc(c.sigla)}</p>
+      <h2>Criar minha senha nova</h2>
+      <p class="sub"><b>${esc(c.criado_por_nome || "O time")}</b>, do time de ${esc(TIME)}, refez o seu acesso. Confira seus dados, crie a senha nova e você já entra liberado, com seus leads e pedidos.</p>` : `<p class="selo selo-ok" style="margin:0 0 10px">Convite da unidade ${esc(c.sigla)}</p>
       <h2>Criar meu acesso</h2>
-      <p class="sub"><b>${esc(c.criado_por_nome || "O dono da unidade")}</b> convidou você para a equipe da unidade <b>${esc(c.sigla)}</b>. Crie sua senha e você já entra liberado, sem esperar aprovação.</p>
+      <p class="sub"><b>${esc(c.criado_por_nome || "O dono da unidade")}</b> convidou você para a equipe da unidade <b>${esc(c.sigla)}</b>. Crie sua senha e você já entra liberado, sem esperar aprovação.</p>`}
       <form id="f-convite" novalidate>
         <div class="campo"><label for="v-nome">Nome completo</label><input id="v-nome" type="text" autocomplete="name" required value="${esc(c.nome)}"></div>
         <div class="campo"><label for="v-email">E-mail Azul</label><input id="v-email" type="email" value="${esc(c.email)}" readonly aria-readonly="true"><span class="dica">É o e-mail do convite e vira o seu login.</span></div>
@@ -571,9 +598,9 @@
           <div class="campo"><label for="v-senha2">Repita a senha</label><input id="v-senha2" type="password" autocomplete="new-password" required></div>
         </div>
         <div class="erro-form" id="v-erro" hidden></div>
-        <button class="btn btn-primario btn-largo" type="submit">Criar acesso e entrar</button>
+        <button class="btn btn-primario btn-largo" type="submit">${nova ? "Criar senha e entrar" : "Criar acesso e entrar"}</button>
       </form>
-      <p class="sub" style="margin-top:18px">Já tem acesso? <button class="link-btn" id="v-ja">Entrar</button></p>`);
+      <p class="sub" style="margin-top:18px">${nova ? "Já criou a senha nova?" : "Já tem acesso?"} <button class="link-btn" id="v-ja">Entrar</button></p>`);
     document.getElementById("v-ja").onclick = irEntrar;
     const f = document.getElementById("f-convite");
     f.addEventListener("submit", async (ev) => {
@@ -588,9 +615,11 @@
       if (v("v-senha") !== v("v-senha2")) return mostrar("As senhas não são iguais.");
       try {
         await ocupado(f.querySelector("button[type=submit]"), () => API.cadastrarComConvite(codigo, v("v-senha"), { nome: v("v-nome"), celular: cel }));
-        tirarConviteDaUrl(); E.tela = null; E.boasVindas = c.sigla; iniciar();
+        tirarConviteDaUrl(); E.tela = null; if (nova) E.senhaNova = true; else E.boasVindas = c.sigla; iniciar();
       } catch (e) {
-        mostrar(e && e.code === "auth/email-already-in-use" ? `O e-mail ${c.email} já tem acesso ao portal. Clique em Entrar e use a sua senha.` : API.traduzir(e));
+        mostrar(e && e.code === "auth/email-already-in-use"
+          ? (nova ? `O login antigo de ${c.email} ainda existe. Avise o time de ${TIME} para terminar de refazer o seu acesso e tente de novo.` : `O e-mail ${c.email} já tem acesso ao portal. Clique em Entrar e use a sua senha.`)
+          : API.traduzir(e));
       }
     });
   }
@@ -689,7 +718,7 @@
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
-        <main class="principal" id="principal">${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}</p></main>
+        <main class="principal" id="principal">${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}${AUTORIA}</p></main>
       </div>`;
 
     $app.querySelectorAll("[data-tela]").forEach(b => b.addEventListener("click", () => { E.tela = b.dataset.tela; E.f.busca = ""; desenhar(); window.scrollTo(0, 0); }));
@@ -962,8 +991,43 @@
     } catch (e) { aviso(API.traduzir(e), true); }
   }
 
+  // Regras de status. Devolve o motivo do bloqueio (para o pop-up) ou null se a mudança pode seguir.
+  const ETAPAS_COM_CONTATO = ["Em negociação", "Em implantação", "Embarque iniciado"];
+  function regraStatus(l, novo) {
+    if (!l || novo === l.status) return null;
+    if (novo === "Em implantação" && !["Em negociação", "Embarque iniciado"].includes(l.status))
+      return { titulo: "Antes vem a negociação", texto: `<b>${esc(l.empresa)}</b> está em <b>${esc(l.status)}</b>. O lead precisa passar por <b>Em negociação</b> antes de ir para Em implantação.`, foco: "status" };
+    if (novo === "Embarque iniciado" && l.status !== "Em implantação")
+      return { titulo: "Antes vem a implantação", texto: `<b>${esc(l.empresa)}</b> está em <b>${esc(l.status)}</b>. O lead precisa passar por <b>Em implantação</b> antes de ir para Embarque iniciado.`, foco: "status" };
+    if (ETAPAS_COM_CONTATO.includes(novo) && !marcas(l).ok.size)
+      return { titulo: "Falta marcar o contato que funcionou", texto: `Para passar <b>${esc(l.empresa)}</b> para <b>${esc(novo)}</b>, marque com <b>✓</b> o telefone ou e-mail em que você conseguiu falar com a empresa. Assim o time sabe qual contato usar se o cliente fechar.`, foco: "contatos" };
+    if (novo === "Contato inválido" && !tentativasDe(l) && l.contato_valido !== "Não")
+      return { titulo: "Tente o contato antes", texto: `Para marcar <b>${esc(l.empresa)}</b> como Contato inválido, registre pelo menos uma tentativa: use o WhatsApp, a ligação ou o e-mail da ficha e confirme quando o portal perguntar. Se você já sabe que um número não existe, marque ele com <b>✕</b>.`, foco: "contatos" };
+    return null;
+  }
+  const REGRA_AZUL = (l) => ({ titulo: "Cliente Azul pede uma observação", texto: `Para marcar <b>${esc(l.empresa)}</b> como Cliente Azul, escreva os detalhes: qual filial ou CNPJ já embarca, com qual unidade e quem é o contato.`, foco: "azul" });
+  // Pop-up de mudança barrada. Com "outro", mostra também um botão de ação (ex.: abrir a ficha). Devolve true se clicou nele.
+  function barrado(r, outro) {
+    return new Promise(resolve => {
+      $conf.innerHTML = `<div class="cf-corpo cf-barrado"><p class="selo-barrado" style="margin:0 0 10px">Mudança de status barrada</p><h2>${esc(r.titulo)}</h2><p>${r.texto}</p>
+        <div class="cf-botoes">${outro ? `<button type="button" class="btn" data-cf="nao">Fechar</button><button type="button" class="btn btn-primario" data-cf="sim">${esc(outro)}</button>` : `<button type="button" class="btn btn-primario" data-cf="nao">Entendi</button>`}</div></div>`;
+      let feito = false;
+      const terminar = (ok) => { if (feito) return; feito = true; resolve(ok); if ($conf.open) $conf.close(); $conf.innerHTML = ""; };
+      $conf.querySelector('[data-cf="nao"]').onclick = () => terminar(false);
+      const sim = $conf.querySelector('[data-cf="sim"]'); if (sim) sim.onclick = () => terminar(true);
+      $conf.oncancel = (e) => { e.preventDefault(); terminar(false); };
+      $conf.onclick = (e) => { if (e.target === $conf) terminar(false); };
+      $conf.showModal();
+      (sim || $conf.querySelector('[data-cf="nao"]')).focus();
+    });
+  }
+
   async function salvarStatus(id, status) {
     const l = E.leads.find(x => x.id === id);
+    const r = regraStatus(l, status);
+    if (r) { desenhar(); if (await barrado(r, "Abrir a ficha do lead")) janelaLead(id, { foco: r.foco }); return; }
+    // Cliente Azul pede observação: avisa e abre a ficha já com o status escolhido.
+    if (status === "Cliente Azul" && l.status !== "Cliente Azul") { desenhar(); if (await barrado(REGRA_AZUL(l), "Abrir a ficha e escrever")) janelaLead(id, { status, foco: "azul" }); return; }
     // Sem interesse pede o motivo: abre a ficha já com o status escolhido.
     if (status === "Sem interesse") { desenhar(); janelaLead(id, { status }); return; }
     if (!(await confirmar({ titulo: `Mudar ${l.empresa} para ${status}?`, texto: `Hoje está em ${esc(l.status)}. ${esc(DESC[status] || "")}`, botao: "Mudar status" }))) { desenhar(); return; }
@@ -987,6 +1051,21 @@
   // ------------------------------------------------------------------
   // Ficha do lead: contatos com mensagem pronta e histórico
   // ------------------------------------------------------------------
+  // Modelos de abordagem (listas.js). "Primeiro contato" e "Retomada" usam as mensagens de sempre.
+  function modelosMensagem() {
+    const M = L.mensagens;
+    const base = { primeiro: { whatsapp: M.whatsapp, emailAssunto: M.emailAssunto, email: M.email },
+      retomada: { whatsapp: M.whatsappRetomada || M.whatsapp, emailAssunto: M.emailRetomadaAssunto || M.emailAssunto, email: M.emailRetomada || M.email, dica: "Para quem ainda não respondeu." } };
+    const lista = (L.modelos && L.modelos.length ? L.modelos : [{ id: "primeiro", nome: "Primeiro contato" }, { id: "retomada", nome: "Retomada (sem resposta)" }]);
+    return lista.map(m => ({ ...(base[m.id] || {}), ...m })).filter(m => m.whatsapp && m.email);
+  }
+  // Modelo sugerido: reativação para quem volta de Sem interesse, cotação em negociação, retomada a partir da 2ª tentativa.
+  function modeloPadrao(l, n) {
+    if (l.status === "Sem interesse") return "reativacao";
+    if (l.status === "Em negociação") return "cotacao";
+    return n >= 1 ? "retomada" : "primeiro";
+  }
+
   function preencher(modelo, l) {
     const u = E.perfil.unidades && E.perfil.unidades.find(x => x.sigla === l.sigla) || {};
     const contato = l.contato && !/fict/i.test(l.contato) ? ", " + primeiroNome(l.contato) : "";
@@ -1078,6 +1157,7 @@
     const retomada = n >= 1;
     const statusInicial = op.status || l.status;
     let pendente = null; // ação aberta que espera a confirmação "Você enviou?"
+    let modeloEnviado = ""; // nome do modelo de mensagem usado no último envio (vai para o histórico)
     let motivo = l.motivo || "";
     let tentarEm = l.tentar_em || "";
     const prazos = [["Não", ""], ["Em 1 mês", somaDias(30)], ["Em 3 meses", somaDias(90)], ["Em 6 meses", somaDias(180)]];
@@ -1099,8 +1179,8 @@
               <button type="button" class="btn btn-p" data-decidir="invalido">Marcar Contato inválido</button>
             </div></div>` : ""}
         <div class="contatos">
-          ${tel ? `<button class="btn btn-zap btn-p" data-canal="whatsapp">${retomada ? "WhatsApp: mensagem de retomada" : "WhatsApp com mensagem pronta"}</button><button class="btn btn-p" data-canal="ligacao">Ligar</button>` : ""}
-          ${email ? `<button class="btn btn-p" data-canal="email">${retomada ? "E-mail de retomada" : "E-mail com mensagem pronta"}</button>` : ""}
+          ${tel ? `<button class="btn btn-zap btn-p" data-canal="whatsapp">WhatsApp com mensagem pronta</button><button class="btn btn-p" data-canal="ligacao">Ligar</button>` : ""}
+          ${email ? `<button class="btn btn-p" data-canal="email">E-mail com mensagem pronta</button>` : ""}
           ${n ? `<span class="sub tentativas-txt">${n} tentativa${n > 1 ? "s" : ""}${l.ultima_tentativa ? ", última " + haDias(l.ultima_tentativa) : ""}</span>` : ""}
         </div>
         <div id="l-compor"></div>
@@ -1128,6 +1208,13 @@
               <div class="pilulas-op">${prazos.map(([t, d]) => `<button type="button" class="pilula-op" data-tentar="${d}" aria-pressed="${d === tentarEm || (!d && !tentarEm)}">${t}</button>`).join("")}</div>
               <p class="sub" id="l-tentar-txt"></p>
             </div>
+          </fieldset>
+
+          <fieldset class="extra destaque" id="l-bloco-azul" hidden>
+            <legend>Detalhes do Cliente Azul</legend>
+            <p class="sub">Obrigatório. Vai para o histórico do lead como observação.</p>
+            <div class="campo"><label for="l-azul">Qual filial ou CNPJ já embarca, com qual unidade e quem é o contato?</label>
+              <textarea id="l-azul" rows="3" maxlength="1000" placeholder="Ex.: a matriz em Campinas já embarca com a CPQ, contato Ana (compras)."></textarea></div>
           </fieldset>
 
           <fieldset class="extra" id="l-bloco-quali" hidden>
@@ -1161,12 +1248,13 @@
       <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="l-salvar">Salvar</button></div>`,
     (j) => {
       const st = j.querySelector("#l-status"), dt = j.querySelector("#l-data");
-      const blocoMotivo = j.querySelector("#l-bloco-motivo"), blocoQuali = j.querySelector("#l-bloco-quali"), blocoAgenda = j.querySelector("#l-bloco-agenda");
+      const blocoMotivo = j.querySelector("#l-bloco-motivo"), blocoQuali = j.querySelector("#l-bloco-quali"), blocoAgenda = j.querySelector("#l-bloco-agenda"), blocoAzul = j.querySelector("#l-bloco-azul");
       const agData = j.querySelector("#ag-data"), agHora = j.querySelector("#ag-hora"), agLembrete = j.querySelector("#ag-lembrete");
       const erro = j.querySelector("#l-erro");
 
       const mostrarBlocos = () => {
         blocoMotivo.hidden = st.value !== "Sem interesse";
+        blocoAzul.hidden = !(st.value === "Cliente Azul" && l.status !== "Cliente Azul");
         blocoQuali.hidden = !QUALI.has(st.value);
         blocoAgenda.hidden = ["Sem interesse", "Contato inválido"].includes(st.value);
       };
@@ -1177,7 +1265,20 @@
       };
       mostrarBlocos(); textoTentar();
 
-      st.addEventListener("change", () => { j.querySelector("#l-desc").textContent = DESC[st.value] || ""; if (!dt.value && st.value !== "Novo") dt.value = hojeISO(); mostrarBlocos(); erro.hidden = true; });
+      let statusAntes = st.value;
+      const irPara = (foco) => {
+        const alvo = foco === "contatos" ? (j.querySelector("#l-tels") || j.querySelector(".contatos")) : foco === "azul" ? blocoAzul : st;
+        if (!alvo) return;
+        alvo.scrollIntoView({ block: "center", behavior: "smooth" });
+        alvo.classList.remove("realce"); void alvo.offsetWidth; alvo.classList.add("realce");
+        if (foco === "azul") setTimeout(() => j.querySelector("#l-azul").focus(), 300);
+      };
+      st.addEventListener("change", async () => {
+        const r = regraStatus(l, st.value);
+        if (r) { st.value = statusAntes; await barrado(r); irPara(r.foco); return; }
+        statusAntes = st.value;
+        j.querySelector("#l-desc").textContent = DESC[st.value] || ""; if (!dt.value && st.value !== "Novo") dt.value = hojeISO(); mostrarBlocos(); erro.hidden = true;
+      });
 
       // Motivo de Sem interesse e "tentar de novo".
       j.querySelectorAll("[data-motivo]").forEach(b => b.addEventListener("click", () => {
@@ -1258,8 +1359,8 @@
           const ok = b.dataset.r === "sim";
           const qual = canal === "email" ? (mails.length > 1 ? ` · ${email}` : "") : (tels.length > 1 ? ` · ${foneTxt(tel)}` : "");
           let texto = {
-            whatsapp: ok ? (retomada ? "WhatsApp: mensagem de retomada enviada" : "WhatsApp: mensagem enviada") : null,
-            email: ok ? (retomada ? "E-mail de retomada enviado" : "E-mail: proposta enviada") : null,
+            whatsapp: ok ? `WhatsApp enviado: ${modeloEnviado || (retomada ? "Retomada" : "Primeiro contato")}` : null,
+            email: ok ? `E-mail enviado: ${modeloEnviado || (retomada ? "Retomada" : "Primeiro contato")}` : null,
             ligacao: ok ? "Ligação: conseguiu falar" : "Ligação: não atendeu"
           }[canal];
           if (texto) texto += qual;
@@ -1287,21 +1388,30 @@
       const compor = j.querySelector("#l-compor");
       const acionar = (canal) => {
         if (canal === "ligacao") { pendente = "ligacao"; location.href = tel.startsWith("0800") ? `tel:${tel}` : `tel:+55${tel}`; setTimeout(() => perguntar("ligacao"), 1500); return; }
-        const M = L.mensagens;
-        const assunto = preencher(retomada ? (M.emailRetomadaAssunto || M.emailAssunto) : M.emailAssunto, l);
-        const corpo = preencher(canal === "email" ? (retomada ? (M.emailRetomada || M.email) : M.email) : (retomada ? (M.whatsappRetomada || M.whatsapp) : M.whatsapp), l);
+        const mods = modelosMensagem();
+        let mod = mods.find(m => m.id === modeloPadrao(l, n)) || mods[0];
+        const textoDe = (m) => preencher(canal === "email" ? m.email : m.whatsapp, l);
         compor.innerHTML = `<div class="msg-prev">
-            <div class="cab">${canal === "email" ? `<b>Para</b>${esc(email)}<br><b>Assunto</b><input id="m-assunto" value="${esc(assunto)}">` : `<b>Para</b>WhatsApp ${esc(foneTxt(tel))}`}</div>
-            <textarea id="m-texto" rows="8">${esc(corpo)}</textarea></div>
-          <div class="acoes" style="margin:8px 0 16px"><span class="sub" style="flex:1">${retomada ? `Mensagem de retomada (${n + 1}ª tentativa). ` : ""}Você pode ajustar o texto antes de abrir.</span>
+            <div class="cab cab-modelo"><label for="m-modelo">Modelo</label><select id="m-modelo">${mods.map(m => `<option value="${esc(m.id)}"${m.id === mod.id ? " selected" : ""}>${esc(m.nome)}</option>`).join("")}</select></div>
+            <div class="cab">${canal === "email" ? `<b>Para</b>${esc(email)}<br><b>Assunto</b><input id="m-assunto" value="${esc(preencher(mod.emailAssunto, l))}">` : `<b>Para</b>WhatsApp ${esc(foneTxt(tel))}`}</div>
+            <textarea id="m-texto" rows="8">${esc(textoDe(mod))}</textarea></div>
+          <div class="acoes" style="margin:8px 0 16px"><span class="sub" style="flex:1" id="m-dica"></span>
             <button class="btn btn-p" id="m-cancelar">Cancelar</button><button class="btn btn-p btn-primario" id="m-abrir">${canal === "email" ? "Abrir no e-mail" : "Abrir no WhatsApp"}</button></div>`;
+        const dicaMod = () => { compor.querySelector("#m-dica").textContent = `${mod.id === "retomada" && n ? `${n + 1}ª tentativa. ` : ""}${mod.dica ? mod.dica + " " : ""}Você pode ajustar o texto antes de abrir.`; };
+        dicaMod();
+        compor.querySelector("#m-modelo").onchange = (e) => {
+          mod = mods.find(m => m.id === e.target.value) || mod;
+          compor.querySelector("#m-texto").value = textoDe(mod);
+          const as = compor.querySelector("#m-assunto"); if (as) as.value = preencher(mod.emailAssunto, l);
+          dicaMod();
+        };
         compor.querySelector("#m-cancelar").onclick = () => { compor.innerHTML = ""; };
         compor.querySelector("#m-abrir").onclick = () => {
           const texto = compor.querySelector("#m-texto").value;
           const url = canal === "email"
             ? `mailto:${email}?subject=${encodeURIComponent(compor.querySelector("#m-assunto").value)}&body=${encodeURIComponent(texto)}`
             : `https://wa.me/55${tel}?text=${encodeURIComponent(texto)}`;
-          pendente = canal; compor.innerHTML = "";
+          pendente = canal; modeloEnviado = mod.nome; compor.innerHTML = "";
           if (canal === "email") location.href = url; else window.open(url, "_blank", "noopener");
           setTimeout(() => { if (pendente) perguntar(canal); }, 1500);
         };
@@ -1352,6 +1462,11 @@
 
       j.querySelector("#l-salvar").addEventListener("click", async (ev) => {
         const falha = (msg) => { erro.textContent = msg; erro.hidden = false; erro.scrollIntoView({ block: "center", behavior: "smooth" }); };
+        const bt = ev.currentTarget;
+        const regra = regraStatus(l, st.value);
+        if (regra) { await barrado(regra); irPara(regra.foco); return; }
+        const textoAzul = st.value === "Cliente Azul" && l.status !== "Cliente Azul" ? j.querySelector("#l-azul").value.trim() : "";
+        if (st.value === "Cliente Azul" && l.status !== "Cliente Azul" && !textoAzul) { await barrado(REGRA_AZUL(l)); irPara("azul"); return; }
         const dados = { status: st.value, data_contato: dt.value || null };
         if (st.value === "Sem interesse") {
           const outro = j.querySelector("#l-outro").value.trim();
@@ -1371,17 +1486,21 @@
         ["motivo", "motivo_outro", "tentar_em", "retorno", "retorno_hora", "lembrete", "volume", "destinos", "transportadora"].forEach(k => {
           if (k in dados && (dados[k] || "") === (l[k] || "")) delete dados[k];
         });
-        const bt = ev.currentTarget;
         if (!(await confirmar({ titulo: `Salvar ${l.empresa}?`, texto: `Status: ${esc(st.value)}${dados.retorno ? ` · próximo contato em ${data(dados.retorno)}` : ""}.`, botao: "Salvar" }))) return;
         try {
-          const novo = await ocupado(bt, () => API.atualizarLead(id, dados));
+          const novo = await ocupado(bt, async () => {
+            const r = await API.atualizarLead(id, dados);
+            if (textoAzul) await API.registrar(id, "observacao", "Cliente Azul: " + textoAzul);
+            return r;
+          });
           Object.assign(l, novo); fechar();
           await aposMudarLead(st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.");
         } catch (e) { aviso(API.traduzir(e), true); }
       });
 
       if (op.canal) { const b = j.querySelector(`[data-canal="${op.canal}"]`); if (b) b.click(); }
-      if (op.status) { st.dispatchEvent(new Event("change")); blocoMotivo.scrollIntoView({ block: "center" }); }
+      if (op.status) { st.value = op.status; statusAntes = op.status; j.querySelector("#l-desc").textContent = DESC[op.status] || ""; if (!dt.value) dt.value = hojeISO(); mostrarBlocos(); (op.status === "Sem interesse" ? blocoMotivo : st).scrollIntoView({ block: "center" }); }
+      if (op.foco) setTimeout(() => irPara(op.foco), 150);
     });
   }
 
@@ -2186,7 +2305,7 @@
               ${p.situacao === "aprovado" && p.cargo === "Inside Sales" && (p.papel || "representante") === "representante" ? `<span class="etiqueta alerta">Falta liberar o acesso de time</span>` : ""}
               ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
               ${p.situacao === "aprovado" && !eu ? ["representante", "time", "admin"].filter(x => x !== (p.papel || "representante")).map(x => `<button class="btn btn-p" data-acao="papel" data-papel="${x}" data-id="${esc(p.id)}">Tornar ${PAPEL[x].toLowerCase()}</button>`).join("") : ""}
-              ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Esqueceu a senha</button>` : ""}
+              ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Senha nova</button>` : ""}
               <button class="btn btn-p" data-acao="editarPessoa" data-id="${esc(p.id)}">Editar dados</button>
               ${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
               ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}
@@ -2327,28 +2446,73 @@
     catch (e) { aviso(API.traduzir(e), true); }
   }
 
-  // Senha esquecida: o e-mail de redefinição pode ser barrado pela Azul, então o time tem um caminho manual.
+  // Senha esquecida: o e-mail de redefinição não chega na caixa da Azul. O time refaz o acesso em 2 passos:
+  // 1) exclui o login no Firebase (só dá pelo console no plano gratuito); 2) o portal gera um link de senha nova e manda pelo WhatsApp.
+  const consoleUsuarios = () => `https://console.firebase.google.com/project/${encodeURIComponent((cfg.firebase && cfg.firebase.projectId) || "portal-leads-azul")}/authentication/users`;
   function janelaSenha(id) {
     const p = E.perfis.find(x => x.id === id);
+    const unidades = E.acessos.filter(a => a.uid === id && a.situacao === "aprovado").map(a => a.sigla);
+    const principal = E.unidades.find(u => u.sigla === p.siglaPrincipal) || {};
+    const porLink = (p.cargo || "Representante") === "Representante" && (p.papel || "representante") === "representante" && principal.sigla && !principal.tipo && API.siglaDoEmail(p.email) === p.siglaPrincipal;
+    const outras = unidades.filter(sg => sg !== p.siglaPrincipal);
+    const eraDono = E.unidades.filter(u => u.dono_uid === id).map(u => u.sigla);
+    const notas = [
+      outras.length ? `Ela também usava ${esc(outras.map(rotulo).join(", "))}. Depois que entrar, ela pede essas unidades de novo em Minha conta.` : "",
+      eraDono.length ? `Ela era dona de ${esc(eraDono.map(rotulo).join(", "))}. Depois que entrar, clique em <b>Tornar dono</b> na linha dela.` : ""
+    ].filter(Boolean);
     abrir(`
-      <div class="janela-topo"><div><h2>Esqueceu a senha</h2><p>${esc(p.nome)} · ${esc(p.email)}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-topo"><div><h2>Senha nova</h2><p>${esc(p.nome)} · ${esc(p.email)}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
-        <p><b>1. Tente o link.</b> O portal manda um e-mail para a pessoa criar uma senha nova. Ele pode não chegar, porque o e-mail da Azul costuma barrar o remetente.</p>
-        <p><b>2. Se não chegar:</b></p>
-        <ol style="margin:0 0 10px 20px;line-height:1.6">
-          <li>No Firebase, abra <b>Authentication › Usuários</b>, procure <b>${esc(p.email)}</b> e use <b>⋮ › Excluir conta</b>.</li>
-          <li>Aqui no portal, clique em <b>Excluir cadastro › Excluir de vez</b> nesta pessoa. Os pedidos, leads e histórico continuam salvos.</li>
-          <li>Peça para a pessoa criar o acesso de novo, com o mesmo e-mail e uma senha nova, e aprove.</li>
+        <p style="margin-top:0">São 2 passos. No fim, ${esc(primeiroNome(p.nome))} recebe um link pelo WhatsApp e cria a senha nova sozinha. Pedidos, leads e histórico continuam salvos.</p>
+        <ol class="passos-senha">
+          <li><span class="n">1</span><span><b>Exclua o login antigo no Firebase.</b> O botão copia o e-mail e abre a lista de usuários. Cole na busca e clique em <b>⋮ › Excluir conta</b>.
+            <span class="acao"><button class="btn btn-p" id="ps-firebase">Copiar e-mail e abrir o Firebase</button></span></span></li>
+          <li><span class="n">2</span><span><b>Gere o link da senha nova.</b> ${porLink
+            ? `A pessoa cria a senha e já entra liberada na unidade ${esc(rotulo(p.siglaPrincipal))}, sem aprovar de novo. O link vale ${VALIDADE_CONVITE} dias.`
+            : `O cadastro antigo sai do portal. A pessoa cria o acesso de novo, com o mesmo e-mail, e você aprova em Cadastros.`}
+            <span class="acao"><button class="btn btn-primario btn-p" id="ps-link">Já excluí, gerar o link</button></span></span></li>
         </ol>
+        ${notas.length ? `<p class="sub" style="font-size:13px">${notas.join(" ")}</p>` : ""}
       </div>
-      <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="x-link">Enviar o link</button></div>`,
+      <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button></div>`,
     (j) => {
-      j.querySelector("#x-link").addEventListener("click", async (ev) => {
-        const bt = ev.currentTarget;
-        if (!(await confirmar({ titulo: "Enviar o link de nova senha?", texto: `Vai para ${esc(p.email)}. Se o e-mail da Azul bloquear, siga o passo 2.`, botao: "Enviar link" }))) return;
-        try { await ocupado(bt, () => API.enviarRedefinicao(p.email)); aviso("Link enviado. Se não chegar, siga o passo 2."); }
-        catch (e) { aviso(API.traduzir(e), true); }
+      j.querySelector("#ps-firebase").addEventListener("click", async () => {
+        const ok = await copiar(p.email);
+        window.open(consoleUsuarios(), "_blank", "noopener");
+        aviso(ok ? "E-mail copiado. Cole na busca do Firebase e exclua a conta." : `Não deu para copiar. Procure por ${p.email} no Firebase.`);
       });
+      j.querySelector("#ps-link").addEventListener("click", async (ev) => {
+        const bt = ev.currentTarget;
+        if (!(await confirmar({ titulo: "Já excluiu o login no Firebase?", texto: `O cadastro antigo de <b>${esc(p.email)}</b> sai do portal e o link da senha nova é criado. Se o login ainda existir no Firebase, o link não funciona.`, botao: "Sim, gerar o link" }))) return;
+        try {
+          let codigo = null;
+          await ocupado(bt, async () => {
+            if (porLink) codigo = await API.convidar({ sigla: p.siglaPrincipal, email: p.email, nome: p.nome, celular: p.celular || null });
+            await API.excluirDeVez(id);
+          });
+          await recarregar();
+          janelaSenhaPronta(p, codigo);
+        } catch (e) { aviso(API.traduzir(e), true); }
+      });
+    });
+  }
+  function janelaSenhaPronta(p, codigo) {
+    const link = codigo ? linkConvite(codigo, true) : urlPortal();
+    const msg = codigo
+      ? `Olá, ${primeiroNome(p.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, do time de ${TIME}. Refiz o seu acesso ao ${cfg.nomeDoPortal || "Portal de Leads"}. Abra o link e crie uma senha nova (só para o portal): ${link}\n\nO link vale ${VALIDADE_CONVITE} dias e funciona só com o e-mail ${p.email}. Seus leads e pedidos continuam lá.`
+      : `Olá, ${primeiroNome(p.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, do time de ${TIME}. Refiz o seu acesso ao ${cfg.nomeDoPortal || "Portal de Leads"}. Abra ${link}, clique em Criar meu acesso e use o mesmo e-mail (${p.email}) com uma senha nova. Assim que terminar, me avise que eu libero.`;
+    const wa = zap(p.celular, msg);
+    abrir(`
+      <div class="janela-corpo" style="text-align:center;padding-top:28px">
+        <div class="ok-grande">✓</div>
+        <h2 style="margin:0 0 6px;font-size:21px">Acesso refeito</h2>
+        <p class="sub" style="margin:0 0 16px">Agora mande o link para <b class="forte">${esc(p.nome)}</b>.${codigo ? ` Ele vale até ${esc(validoAte({ criado_em: new Date().toISOString() }))}.` : " Quando ela refizer o cadastro, aprove em Cadastros."}</p>
+        <div class="campo" style="text-align:left"><label for="sp-link">${codigo ? "Link da senha nova" : "Link do portal"}</label><input id="sp-link" class="link-convite" type="text" readonly value="${esc(link)}"></div>
+      </div>
+      <div class="janela-rodape"><button class="btn" id="sp-copiar">Copiar mensagem</button>${wa ? `<a class="btn btn-zap" href="${esc(wa)}" target="_blank" rel="noopener">Enviar pelo WhatsApp</a>` : ""}<button class="btn btn-primario" data-fechar>Pronto</button></div>`,
+    (j) => {
+      j.querySelector("#sp-link").addEventListener("focus", (e) => e.target.select());
+      j.querySelector("#sp-copiar").addEventListener("click", async () => aviso(await copiar(msg) ? "Mensagem com o link copiada. É só colar no WhatsApp." : "Não deu para copiar. Selecione o link e copie."));
     });
   }
 
