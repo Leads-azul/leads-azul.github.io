@@ -330,11 +330,11 @@ dialog::backdrop { background: rgba(11, 26, 56, .45); }
 /* Área principal com marca d'água de rota aérea */
 .principal { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%20600%20400%22%3E%3Cg%20fill%3D%22none%22%20stroke%3D%22%231560D4%22%20stroke-opacity%3D%22.09%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-dasharray%3D%222%2011%22%3E%3Cpath%20d%3D%22M10%20380%20C%20150%20300%2C%20260%20340%2C%20340%20220%20S%20520%2060%2C%20600%2030%22/%3E%3Cpath%20d%3D%22M60%20400%20C%20220%20330%2C%20330%20370%2C%20420%20250%20S%20560%20130%2C%20620%20110%22/%3E%3C/g%3E%3Cg%20transform%3D%22translate%28340%20220%29%20rotate%28-40%29%20scale%281.7%29%20translate%28-12%20-12%29%22%20fill%3D%22%231560D4%22%20fill-opacity%3D%22.1%22%3E%3Cpath%20d%3D%22M2%2013l8-1%205-8h2l-2%208%205%201%202-2h1l-1%203%201%203h-1l-2-2-5%201%202%208h-2l-5-8-8-1z%22/%3E%3C/g%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right -60px top -40px; background-size: 560px auto; }
 .rodape { margin: 36px 0 0; color: var(--muted); font-size: 12px; text-align: center; }
-/* Assinatura de autoria: discreta, uma linha abaixo do rodapé */
-.autoria { display: block; margin-top: 6px; font-size: 11.5px; letter-spacing: .01em; opacity: .85; }
-.autoria b { font-weight: 600; }
-.rodape-lado .autoria { width: max-content; max-width: calc(100vw - 48px); margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .14); color: rgba(255, 255, 255, .58); }
-.rodape-lado .autoria b { color: rgba(255, 255, 255, .82); }
+/* Assinatura de autoria: bem discreta, uma linha abaixo do rodapé */
+.autoria { display: block; margin-top: 6px; font-size: 11px; letter-spacing: .01em; opacity: .6; }
+.autoria b { font-weight: 500; }
+.rodape-lado .autoria { width: max-content; max-width: calc(100vw - 48px); margin-top: 14px; color: rgba(255, 255, 255, .38); opacity: 1; }
+.rodape-lado .autoria b { color: rgba(255, 255, 255, .48); }
 
 /* Cards brancos arredondados com sombra leve */
 .base, .indicador, .bloco, .tabela-wrap, .vazio { border-radius: var(--radius); box-shadow: var(--shadow); }
