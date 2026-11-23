@@ -294,7 +294,9 @@
 
   async function carregar() {
     if (ehTime()) {
-      const [pedidos, perfis, acessos, unidades] = await Promise.all([API.pedidos(), API.perfis(), API.acessos(), API.unidades()]);
+      // Administrador carrega tudo; o time, só as regiões que ele vê (carteira dele, substituição e regiões livres).
+      E.carteiras = await API.carteiras();
+      const [pedidos, perfis, acessos, unidades] = await Promise.all([ehAdmin() ? API.pedidos() : API.pedidos(null, regioesVisiveis()), API.perfis(), API.acessos(), API.unidades()]);
       Object.assign(E, { pedidos, perfis, acessos, unidades });
     } else {
       // Representante: relê o próprio cadastro (unidade liberada aparece na hora, sem recarregar a página).
@@ -310,7 +312,7 @@
       }));
       E.equipe = equipe;
     }
-    E.carteiras = await API.carteiras();
+    if (!ehTime()) E.carteiras = await API.carteiras();
     // Cidades gravadas antes da padronização aparecem certas na tela ("oSASCO/sP" -> "Osasco/SP").
     [E.pedidos, E.unidades, (E.perfil && E.perfil.unidades) || []].forEach(lista => (lista || []).forEach(x => { if (x && x.cidade_uf) x.cidade_uf = cidadeUf(x.cidade_uf); }));
     E.leads = API.leadsDe(E.pedidos);
@@ -324,11 +326,12 @@
     if (!E.perfil || E.perfil.situacao !== "aprovado") return;
     const siglas = ehTime() ? null : minhasUnidades().map(u => u.sigla);
     const donas = ehTime() ? [] : unidadesDono().map(u => u.sigla);
-    const chave = siglas ? siglas.join(",") + "|" + donas.join(",") : "time";
+    const regs = ehTime() && !ehAdmin() ? regioesVisiveis() : null;
+    const chave = siglas ? siglas.join(",") + "|" + donas.join(",") : "time|" + (regs ? regs.join(",") : "todas");
     if (pararObservar && chave === chaveObservar) return;
     if (pararObservar) pararObservar();
     chaveObservar = chave;
-    pararObservar = API.observar(siglas, () => { clearTimeout(timerTempoReal); timerTempoReal = setTimeout(atualizarSozinho, 700); }, donas);
+    pararObservar = API.observar(siglas, () => { clearTimeout(timerTempoReal); timerTempoReal = setTimeout(atualizarSozinho, 700); }, donas, regs);
   }
   function ocupadoAgora() {
     const a = document.activeElement;
@@ -679,6 +682,17 @@
   const meuPedido = (p) => { const d = donoPedido(p); return !!d && d.uid === E.perfil.id; };
   const pedidoLivre = (p) => !donoPedido(p);
   const minhasRegioes = () => L.regioes.filter(r => { const x = responsavelRegiao(r); return x && x.uid === E.perfil.id; });
+  // Regiões que a pessoa enxerga (as regras do Firebase conferem o mesmo): administrador, todas; time, as da carteira dele,
+  // as que está cobrindo como substituto (até a data) e as livres (sem responsável).
+  function regioesVisiveis() {
+    if (ehAdmin()) return L.regioes.slice();
+    const c = E.carteiras || {}, sub = c.substituto, eu = E.perfil.id;
+    return L.regioes.filter(r => {
+      const x = (c.regioes || {})[r] || null;
+      if (!x || x.uid === eu) return true;
+      return !!(sub && sub.de === x.uid && sub.para && sub.para.uid === eu && (!sub.ate || hojeISO() <= sub.ate));
+    });
+  }
   const euComoResponsavel = () => ({ responsavel: E.perfil.nome, responsavel_uid: E.perfil.id, responsavel_cel: E.perfil.celular || null });
   // dias úteis desde a data (para o alerta de pedido livre parado)
   function diasUteis(desde) {
@@ -693,13 +707,13 @@
     const pendentes = ehAdmin() ? E.perfis.filter(p => p.situacao === "pendente").length + E.acessos.filter(a => a.situacao === "pendente" && !a.principal && perfilDe(a.uid).situacao === "aprovado").length : 0;
     const novos = E.pedidos.filter(p => p.situacao === "Nova" && (meuPedido(p) || pedidoLivre(p))).length;
     const itens = time
-      ? [["pedidos", "Pedidos", novos], ["leads", "Leads"], ["cadastros", "Cadastros", pendentes], ["painel", "Painel"], ["conta", "Minha conta"]]
+      ? [["pedidos", "Pedidos", novos], ["leads", "Leads"], ...(ehAdmin() ? [["cadastros", "Cadastros", pendentes]] : []), ["painel", "Painel"], ["conta", "Minha conta"]]
       : [["leads", "Meus leads", E.leads.filter(paraHoje).length], ["pedidos", "Meus pedidos"], ...(unidadesDono().length ? [["equipe", "Minha equipe", pendentesEquipe()]] : []), ["conta", "Minha conta"]];
 
     const conteudo = {
       leads: time ? telaLeadsTime : telaLeadsRep,
       pedidos: time ? telaPedidosTime : telaPedidosRep,
-      cadastros: telaCadastros,
+      cadastros: ehAdmin() ? telaCadastros : telaPedidosTime,
       equipe: time ? (() => "") : telaEquipe,
       painel: telaPainel,
       conta: telaConta
@@ -1913,7 +1927,7 @@
       <div class="filtros">
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Unidade, representante, segmento, cidade ou responsável"></div>
         <div class="campo"><label for="f-sit">Situação</label><select id="f-sit" data-filtro="situacao"><option value="abertos"${E.f.situacao === "abertos" ? " selected" : ""}>Aguardando o time</option><option value=""${!E.f.situacao ? " selected" : ""}>Todas</option>${opcoes(L.situacoesPedido, E.f.situacao)}</select></div>
-        <div class="campo"><label for="f-reg">Região</label><select id="f-reg" data-filtro="regiao">${opcoes(L.regioes, E.f.regiao, "Todas")}</select></div>
+        <div class="campo"><label for="f-reg">Região</label><select id="f-reg" data-filtro="regiao">${opcoes(regioesVisiveis(), E.f.regiao, "Todas")}</select></div>
       </div>
       ${lista.length ? `<div class="tabela-wrap"><table>
         <thead><tr><th>Pedido</th><th>Data</th><th>Previsão</th><th>Unidade</th><th>Representante</th><th>Segmentos e cidades</th><th>Situação</th><th>Responsável</th><th>Leads</th></tr></thead>
@@ -2216,7 +2230,7 @@
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button><button class="btn" data-acao="exportar">Exportar Excel</button></div></div>
       <div class="filtros">
         <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Empresa, CNPJ, contato ou telefone"></div>
-        <div class="campo"><label for="f-reg">Região</label><select id="f-reg" data-filtro="regiao">${opcoes(L.regioes, E.f.regiao, "Todas")}</select></div>
+        <div class="campo"><label for="f-reg">Região</label><select id="f-reg" data-filtro="regiao">${opcoes(regioesVisiveis(), E.f.regiao, "Todas")}</select></div>
         <div class="campo"><label for="f-loja">Unidade</label><select id="f-loja" data-filtro="loja">${opcoes(lojas, E.f.loja, "Todas")}</select></div>
         <div class="campo"><label for="f-status">Status</label><select id="f-status" data-filtro="status">${opcoes(NOMES_STATUS, E.f.status, "Todos")}</select></div>
         ${seletorVista()}
@@ -2586,7 +2600,7 @@
 
     return `
       <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Painel</h1><p>Retorno das unidades sobre os leads enviados.</p></div>
-        <div class="acoes"><div class="campo" style="margin:0;min-width:180px"><select aria-label="Região" data-filtro="regiao">${opcoes(L.regioes, reg, "Todas as regiões")}</select></div><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
+        <div class="acoes"><div class="campo" style="margin:0;min-width:180px"><select aria-label="Região" data-filtro="regiao">${opcoes(regioesVisiveis(), reg, "Todas as regiões")}</select></div><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       <div class="indicadores">
         <div class="indicador">${icone("pedido")}<div class="valor">${aguardando}</div><div class="rotulo">Pedidos aguardando o time</div></div>
         <div class="indicador">${icone("leads")}<div class="valor">${leads.length}</div><div class="rotulo">Leads enviados</div></div>
@@ -2596,7 +2610,7 @@
       </div>
       <div class="paineis">
         <section class="bloco"><h2>Leads por status</h2>${barras(STATUS.map(s => [s.nome, leads.filter(l => l.status === s.nome).length, s.cor]))}</section>
-        <section class="bloco"><h2>Pedidos por região</h2>${barras(L.regioes.map(r => [r, E.pedidos.filter(p => p.regiao === r && (!reg || r === reg)).length]))}</section>
+        <section class="bloco"><h2>Pedidos por região</h2>${barras(regioesVisiveis().map(r => [r, E.pedidos.filter(p => p.regiao === r && (!reg || r === reg)).length]))}</section>
       </div>
       ${blocoProspeccao(leads)}
       <section class="bloco" style="padding:0;overflow:hidden">

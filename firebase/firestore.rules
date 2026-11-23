@@ -50,6 +50,24 @@ service cloud.firestore {
         && depois.usado == true && depois.usado_por == request.auth.uid;
     }
 
+    // ---------- regiões do time ----------
+    // Administrador vê todas. O time vê só as regiões da carteira dele, as que está cobrindo como substituto
+    // (até a data combinada) e as regiões sem responsável (livres). Sem carteiras salvas, tudo é livre.
+    function caminhoCarteiras() { return /databases/$(database)/documents/config/carteiras; }
+    function substituindo(c, uid) {
+      let s = c.get('substituto', null);
+      return s != null && s.get('de', null) == uid && s.get('para', null) != null && s.para.get('uid', null) == request.auth.uid
+        && (s.get('ate', null) == null || request.time < timestamp.value(s.ate + 'T23:59:59-03:00'));
+    }
+    function regiaoLivreOuMinha(c, regiao) {
+      let x = c.regioes.get(regiao, null);
+      return x == null || x.get('uid', null) == request.auth.uid || substituindo(c, x.get('uid', null));
+    }
+    function regiaoDoTime(regiao) {
+      return !(regiao in regioes()) || !exists(caminhoCarteiras()) || regiaoLivreOuMinha(get(caminhoCarteiras()).data, regiao);
+    }
+    function veRegiao(regiao) { return ehAdmin() || (ehTime() && regiaoDoTime(regiao)); }
+
     // ---------- listas ----------
     function regioes() { return ['Sudeste', 'Sul', 'Centro Oeste', 'Nordeste', 'Norte']; }
     function statusLead() { return ['Novo', 'Prospecção', 'Em negociação', 'Em implantação', 'Embarque iniciado', 'Cliente Azul', 'Sem interesse', 'Contato inválido']; }
@@ -130,7 +148,8 @@ service cloud.firestore {
         && request.resource.data.pedidoAtual == null
         && request.resource.data.criadaEm == request.time;
       allow update: if
-        (ehTime() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome']))
+        (ehTime() && veRegiao(resource.data.get('regiao', null)) && veRegiao(request.resource.data.get('regiao', null))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome']))
         // só o administrador escolhe o dono da unidade
         || (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome', 'dono_uid', 'dono_nome'])
           && (request.resource.data.get('dono_uid', null) == null || request.resource.data.dono_uid is string)
@@ -246,9 +265,10 @@ service cloud.firestore {
     }
 
     match /pedidos/{id} {
-      allow read: if ehTime() || usaUnidade(resource.data.sigla);
+      // Time: só pedidos das regiões que ele vê (veRegiao). O app consulta região por região.
+      allow read: if veRegiao(resource.data.regiao) || usaUnidade(resource.data.sigla);
 
-      allow create: if (ehTime() || usaUnidade(request.resource.data.sigla))
+      allow create: if (veRegiao(request.resource.data.get('regiao', null)) || usaUnidade(request.resource.data.sigla))
         && request.resource.data.keys().hasOnly(['sigla', 'regiao', 'cidade_uf', 'solicitante', 'solicitante_nome', 'segmentos', 'cidades', 'empresas',
              'situacao', 'previsao', 'responsavel', 'responsavel_uid', 'responsavel_cel', 'observacao_time', 'leads', 'liberada', 'travando', 'alterado', 'criada_em', 'enviada_em', 'concluida_em'])
         && request.resource.data.solicitante == request.auth.uid
@@ -265,7 +285,8 @@ service cloud.firestore {
 
       allow update: if
         // o time importa leads, muda situação, previsão, responsável e observação
-        (ehTime()
+        (veRegiao(resource.data.get('regiao', null))
+          && request.resource.data.get('regiao', null) == resource.data.get('regiao', null)
           && request.resource.data.sigla == resource.data.sigla
           && request.resource.data.leads is map
           && request.resource.data.leads.keys().hasOnly(chavesLead())
@@ -281,7 +302,7 @@ service cloud.firestore {
       // ---------- histórico de cada lead ----------
       match /historico/{hid} {
         function pedidoPai() { return get(/databases/$(database)/documents/pedidos/$(id)).data; }
-        function podeVer() { return ehTime() || usaUnidade(pedidoPai().sigla); }
+        function podeVer() { return veRegiao(pedidoPai().get('regiao', null)) || usaUnidade(pedidoPai().sigla); }
 
         allow read: if podeVer();
         allow create: if podeVer()

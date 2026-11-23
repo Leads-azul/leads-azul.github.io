@@ -366,10 +366,15 @@
       async enviarRedefinicao(email) { await auth.sendPasswordResetEmail(email, continuar()); },
 
       // Pedidos (o time vê todos; o representante, os das unidades dele)
-      async pedidos(siglas) {
+      // siglas: pedidos das unidades do representante. regioes: pedidos das regiões que o time vê (uma consulta por região).
+      // Sem nenhum dos dois: todos (só o administrador consegue).
+      async pedidos(siglas, regioes) {
         let docs;
         if (siglas) {
           const partes = await Promise.all(siglas.map(s => db.collection("pedidos").where("sigla", "==", s).get()));
+          docs = partes.flatMap(q => q.docs);
+        } else if (regioes) {
+          const partes = await Promise.all(regioes.map(r => db.collection("pedidos").where("regiao", "==", r).get()));
           docs = partes.flatMap(q => q.docs);
         } else docs = (await db.collection("pedidos").get()).docs;
         return docs.map(doc).sort((a, b) => String(b.criada_em).localeCompare(String(a.criada_em)));
@@ -379,12 +384,12 @@
       // Avisa quando algo muda no banco (aprovação, base enviada, status), para a tela se atualizar sozinha.
       // time: pedidos, cadastros, acessos e unidades; representante: o próprio cadastro, os acessos e os pedidos das unidades.
       // donoDe: unidades em que a pessoa é dona (vê a equipe e os convites mudando na hora).
-      observar(siglas, aoMudar, donoDe) {
+      observar(siglas, aoMudar, donoDe, regioes) {
         const u = auth.currentUser; if (!u) return () => {};
         const consultas = siglas
           ? [db.doc("perfis/" + u.uid), db.collection("acessos").where("uid", "==", u.uid), ...siglas.map(sg => db.collection("pedidos").where("sigla", "==", sg)), ...(siglas.length ? [db.doc("config/carteiras")] : []),
              ...(donoDe || []).flatMap(sg => [db.collection("acessos").where("sigla", "==", sg), db.collection("convites").where("sigla", "==", sg)])]
-          : [db.collection("pedidos"), db.collection("perfis"), db.collection("acessos"), db.collection("unidades"), db.doc("config/carteiras")];
+          : [...(regioes ? regioes.map(r => db.collection("pedidos").where("regiao", "==", r)) : [db.collection("pedidos")]), db.collection("perfis"), db.collection("acessos"), db.collection("unidades"), db.doc("config/carteiras")];
         const primeira = new Set();
         const saidas = consultas.map((q, i) => q.onSnapshot({ includeMetadataChanges: false }, (snap) => {
           if (!primeira.has(i)) { primeira.add(i); return; } // a primeira leitura é a que a tela já tem
@@ -679,8 +684,9 @@
       },
       async enviarRedefinicao() { if (!ehTime()) negar(); await espera(); },
       observar() { return () => {}; },
-      async pedidos(siglas) {
-        const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : ehTime());
+      async pedidos(siglas, regioes) {
+        if (!siglas && !regioes && !ehAdmin()) negar();
+        const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : regioes ? ehTime() && regioes.includes(p.regiao) : ehAdmin());
         return copia(lista).sort((a, b) => String(b.criada_em).localeCompare(String(a.criada_em)));
       },
       leadsDe: achatar,
