@@ -78,7 +78,7 @@ service cloud.firestore {
     function camposDoRep() {
       return ['status', 'data_contato', 'contato_valido', 'atualizado_em', 'retorno', 'retorno_hora', 'lembrete', 'tentativas',
               'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora', 'tel_errados',
-              'contatos_ok', 'contatos_nao'];
+              'contatos_ok', 'contatos_nao', 'cnpj_embarque', 'razao_embarque'];
     }
     function motivosPerda() { return ['', 'Já usa outra transportadora', 'Achou o preço alto', 'Não faz envios', 'Sem volume agora', 'Decisor não atende', 'Outro motivo']; }
     function dataOuVazio(v) { return v == null || (v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))); }
@@ -230,6 +230,15 @@ service cloud.firestore {
             || (request.resource.data.situacao == 'Enviada' && request.resource.data.liberada == false)));
     }
     // Próximo contato, tentativas, motivo e qualificação: tipos e tamanhos.
+    // Embarque iniciado pede o CNPJ (00.000.000/0000-00) e a razão social de quem embarcou.
+    function cnpjOk(c) { return c == null || c == '' || (c is string && c.matches('^[0-9]{2}[.][0-9]{3}[.][0-9]{3}/[0-9]{4}-[0-9]{2}$')); }
+    function embarqueOk(novo, velho) {
+      let c = novo.get('cnpj_embarque', '');
+      let r = novo.get('razao_embarque', '');
+      return cnpjOk(c) && textoOuNulo(r, 150)
+        && (novo.status != 'Embarque iniciado' || velho.status == 'Embarque iniciado'
+            || (c is string && c.size() == 18 && r is string && r.size() >= 3));
+    }
     function extrasOk(novo, velho) {
       return dataOuVazio(novo.get('retorno', ''))
         && dataOuVazio(novo.get('tentar_em', ''))
@@ -245,6 +254,7 @@ service cloud.firestore {
         // ✓ Funciona / ✕ Não funciona em cada telefone ou e-mail
         && novo.get('contatos_ok', []) is list && novo.get('contatos_ok', []).size() <= 150
         && novo.get('contatos_nao', []) is list && novo.get('contatos_nao', []).size() <= 150
+        && embarqueOk(novo, velho)
         && novo.get('tentativas', 0) is int
         && (novo.get('tentativas', 0) == velho.get('tentativas', 0) || novo.get('tentativas', 0) == velho.get('tentativas', 0) + 1);
     }

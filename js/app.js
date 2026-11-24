@@ -176,14 +176,21 @@
   const ponto = (s) => `<span class="ponto" style="background:${COR[s] || "#999"}"></span>`;
   const chipStatus = (s) => `<span class="chip-status" style="--c:${COR[s] || "#999"}">${esc(s)}</span>`;
 
+  // Antes de fechar uma janela, a tela pode salvar algo pendente (ex.: observação digitada e não adicionada).
+  let guardaFechar = null;
   function abrir(html, ligar) {
+    guardaFechar = null;
     $janela.innerHTML = html;
     if (!$janela.open) $janela.showModal();
     $janela.querySelectorAll("[data-fechar]").forEach(b => b.addEventListener("click", fechar));
     if (ligar) ligar($janela);
   }
-  function fechar() { if ($janela.open) $janela.close(); }
+  async function fechar() {
+    if (guardaFechar) { const g = guardaFechar; guardaFechar = null; if (!(await g())) { guardaFechar = g; return; } }
+    if ($janela.open) $janela.close();
+  }
   $janela.addEventListener("click", (e) => { if (e.target === $janela) fechar(); });
+  $janela.addEventListener("cancel", (e) => { if (guardaFechar) { e.preventDefault(); fechar(); } });
 
   // ---- Confirmação de toda ação: "Tem certeza?" com o aviãozinho voando ao confirmar ----
   const $conf = document.createElement("dialog");
@@ -1005,6 +1012,16 @@
     } catch (e) { aviso(API.traduzir(e), true); }
   }
 
+  // CNPJ: confere os dígitos verificadores e devolve no formato 00.000.000/0000-00.
+  function cnpjValido(c) {
+    const d = String(c || "").replace(/\D/g, "");
+    if (d.length !== 14 || /^(\d)\1+$/.test(d)) return false;
+    const dv = (n) => { const pesos = n === 12 ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2] : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]; const r = pesos.reduce((a, p, i) => a + p * Number(d.charAt(i)), 0) % 11; return r < 2 ? 0 : 11 - r; };
+    return dv(12) === Number(d.charAt(12)) && dv(13) === Number(d.charAt(13));
+  }
+  const cnpjFormatado = (c) => { const d = String(c || "").replace(/\D/g, "").slice(0, 14); return d.length === 14 ? `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}` : d; };
+  const REGRA_EMBARQUE = (l) => ({ titulo: "Embarque iniciado pede CNPJ e razão social", texto: `Para marcar <b>${esc(l.empresa)}</b> como Embarque iniciado, informe o <b>CNPJ</b> e a <b>razão social</b> de quem está embarcando. Assim o time confere o cliente no sistema da Azul.`, foco: "embarque" });
+
   // Regras de status. Devolve o motivo do bloqueio (para o pop-up) ou null se a mudança pode seguir.
   const ETAPAS_COM_CONTATO = ["Em negociação", "Em implantação", "Embarque iniciado"];
   function regraStatus(l, novo) {
@@ -1040,6 +1057,8 @@
     const l = E.leads.find(x => x.id === id);
     const r = regraStatus(l, status);
     if (r) { desenhar(); if (await barrado(r, "Abrir a ficha do lead")) janelaLead(id, { foco: r.foco }); return; }
+    // Embarque iniciado pede CNPJ e razão social: avisa e abre a ficha já com o status escolhido.
+    if (status === "Embarque iniciado" && l.status !== "Embarque iniciado") { desenhar(); if (await barrado(REGRA_EMBARQUE(l), "Abrir a ficha e preencher")) janelaLead(id, { status, foco: "embarque" }); return; }
     // Cliente Azul pede observação: avisa e abre a ficha já com o status escolhido.
     if (status === "Cliente Azul" && l.status !== "Cliente Azul") { desenhar(); if (await barrado(REGRA_AZUL(l), "Abrir a ficha e escrever")) janelaLead(id, { status, foco: "azul" }); return; }
     // Sem interesse pede o motivo: abre a ficha já com o status escolhido.
@@ -1156,6 +1175,8 @@
 
   function janelaLead(id, op) {
     op = op || {};
+    const obsAberta = $janela.open && $janela.querySelector(`#l-obs[data-lead="${id}"]`);
+    if (obsAberta && obsAberta.value.trim() && !op.obsPendente) op.obsPendente = obsAberta.value;
     const l = E.leads.find(x => x.id === id);
     if (!l) return;
     if (desligarFicha) { desligarFicha(); desligarFicha = null; }
@@ -1224,6 +1245,16 @@
             </div>
           </fieldset>
 
+          <fieldset class="extra destaque" id="l-bloco-embarque" hidden>
+            <legend>Dados do embarque</legend>
+            <p class="sub">Obrigatório para Embarque iniciado: CNPJ e razão social de quem está embarcando.</p>
+            <div class="grade-2">
+              <div class="campo"><label for="e-cnpj">CNPJ</label><input id="e-cnpj" type="text" inputmode="numeric" maxlength="18" placeholder="00.000.000/0000-00" value="${esc(l.cnpj_embarque || "")}"></div>
+              <div class="campo"><label for="e-razao">Razão social</label><input id="e-razao" type="text" maxlength="150" placeholder="Como está no cartão CNPJ" value="${esc(l.razao_embarque || "")}"></div>
+            </div>
+            ${l.cnpj && cnpjValido(l.cnpj) ? `<button type="button" class="link-btn" id="e-usar">Usar o CNPJ que veio da Leads2b (${esc(cnpjFormatado(l.cnpj))})</button>` : ""}
+          </fieldset>
+
           <fieldset class="extra destaque" id="l-bloco-azul" hidden>
             <legend>Detalhes do Cliente Azul</legend>
             <p class="sub">Obrigatório. Vai para o histórico do lead como observação.</p>
@@ -1262,13 +1293,14 @@
       <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button><button class="btn btn-primario" id="l-salvar">Salvar</button></div>`,
     (j) => {
       const st = j.querySelector("#l-status"), dt = j.querySelector("#l-data");
-      const blocoMotivo = j.querySelector("#l-bloco-motivo"), blocoQuali = j.querySelector("#l-bloco-quali"), blocoAgenda = j.querySelector("#l-bloco-agenda"), blocoAzul = j.querySelector("#l-bloco-azul");
+      const blocoMotivo = j.querySelector("#l-bloco-motivo"), blocoQuali = j.querySelector("#l-bloco-quali"), blocoAgenda = j.querySelector("#l-bloco-agenda"), blocoAzul = j.querySelector("#l-bloco-azul"), blocoEmbarque = j.querySelector("#l-bloco-embarque");
       const agData = j.querySelector("#ag-data"), agHora = j.querySelector("#ag-hora"), agLembrete = j.querySelector("#ag-lembrete");
       const erro = j.querySelector("#l-erro");
 
       const mostrarBlocos = () => {
         blocoMotivo.hidden = st.value !== "Sem interesse";
         blocoAzul.hidden = !(st.value === "Cliente Azul" && l.status !== "Cliente Azul");
+        blocoEmbarque.hidden = !(st.value === "Embarque iniciado" && l.status !== "Embarque iniciado");
         blocoQuali.hidden = !QUALI.has(st.value);
         blocoAgenda.hidden = ["Sem interesse", "Contato inválido"].includes(st.value);
       };
@@ -1281,11 +1313,26 @@
 
       let statusAntes = st.value;
       const irPara = (foco) => {
-        const alvo = foco === "contatos" ? (j.querySelector("#l-tels") || j.querySelector(".contatos")) : foco === "azul" ? blocoAzul : st;
+        const alvo = foco === "contatos" ? (j.querySelector("#l-tels") || j.querySelector(".contatos")) : foco === "azul" ? blocoAzul : foco === "embarque" ? blocoEmbarque : st;
         if (!alvo) return;
         alvo.scrollIntoView({ block: "center", behavior: "smooth" });
         alvo.classList.remove("realce"); void alvo.offsetWidth; alvo.classList.add("realce");
         if (foco === "azul") setTimeout(() => j.querySelector("#l-azul").focus(), 300);
+        if (foco === "embarque") setTimeout(() => j.querySelector("#e-cnpj").focus(), 300);
+      };
+      const eCnpj = j.querySelector("#e-cnpj");
+      eCnpj.addEventListener("input", () => { const d = eCnpj.value.replace(/\D/g, "").slice(0, 14); eCnpj.value = d.length === 14 ? cnpjFormatado(d) : d; });
+      const eUsar = j.querySelector("#e-usar");
+      if (eUsar) eUsar.addEventListener("click", () => { eCnpj.value = cnpjFormatado(l.cnpj); j.querySelector("#e-razao").focus(); });
+      // Observação digitada e não adicionada: salva sozinha ao salvar o lead ou ao fechar a ficha.
+      const obsCampo = j.querySelector("#l-obs");
+      obsCampo.dataset.lead = id;
+      if (op.obsPendente) obsCampo.value = op.obsPendente;
+      guardaFechar = async () => {
+        const t = obsCampo.value.trim();
+        if (!t) return true;
+        try { await API.registrar(id, "observacao", t); obsCampo.value = ""; aviso("Sua observação foi salva automaticamente."); return true; }
+        catch (e) { aviso(API.traduzir(e), true); return false; }
       };
       st.addEventListener("change", async () => {
         const r = regraStatus(l, st.value);
@@ -1481,7 +1528,16 @@
         if (regra) { await barrado(regra); irPara(regra.foco); return; }
         const textoAzul = st.value === "Cliente Azul" && l.status !== "Cliente Azul" ? j.querySelector("#l-azul").value.trim() : "";
         if (st.value === "Cliente Azul" && l.status !== "Cliente Azul" && !textoAzul) { await barrado(REGRA_AZUL(l)); irPara("azul"); return; }
+        const embarqueNovo = st.value === "Embarque iniciado" && l.status !== "Embarque iniciado";
+        const cnpjEmb = embarqueNovo ? cnpjFormatado(eCnpj.value) : "", razaoEmb = embarqueNovo ? j.querySelector("#e-razao").value.trim() : "";
+        if (embarqueNovo && (!cnpjValido(cnpjEmb) || razaoEmb.length < 3)) {
+          const r = REGRA_EMBARQUE(l);
+          if (eCnpj.value.trim() && !cnpjValido(cnpjEmb)) r.texto = `O CNPJ <b>${esc(eCnpj.value.trim())}</b> não é válido. Confira os números no cartão CNPJ e preencha também a razão social.`;
+          await barrado(r); irPara("embarque"); return;
+        }
+        const obsPendente = obsCampo.value.trim();
         const dados = { status: st.value, data_contato: dt.value || null };
+        if (embarqueNovo) Object.assign(dados, { cnpj_embarque: cnpjEmb, razao_embarque: razaoEmb });
         if (st.value === "Sem interesse") {
           const outro = j.querySelector("#l-outro").value.trim();
           if (!motivo) return falha("Escolha o motivo de Sem interesse.");
@@ -1505,10 +1561,12 @@
           const novo = await ocupado(bt, async () => {
             const r = await API.atualizarLead(id, dados);
             if (textoAzul) await API.registrar(id, "observacao", "Cliente Azul: " + textoAzul);
+            if (embarqueNovo) await API.registrar(id, "observacao", `Embarque iniciado: ${razaoEmb} · CNPJ ${cnpjEmb}`);
+            if (obsPendente) { await API.registrar(id, "observacao", obsPendente); obsCampo.value = ""; }
             return r;
           });
           Object.assign(l, novo); fechar();
-          await aposMudarLead(st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.");
+          await aposMudarLead((st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.") + (obsPendente ? " A observação também foi salva." : ""));
         } catch (e) { aviso(API.traduzir(e), true); }
       });
 
@@ -2242,7 +2300,7 @@
     if (!window.XLSX) { aviso("A exportação não carregou. Recarregue a página e tente de novo.", true); return; }
     const linhas = filtrarLeads(E.leads).map(l => {
       const p = pedidoDe(l);
-      return { "Pedido": l.solicitacao_id, "Unidade": l.sigla, "Região": p.regiao || "", "Representante": p.solicitante_nome || "", "Empresa": l.empresa, "CNPJ": l.cnpj || "",
+      return { "Pedido": l.solicitacao_id, "Unidade": l.sigla, "Região": p.regiao || "", "Representante": p.solicitante_nome || "", "Empresa": l.empresa, "CNPJ": l.cnpj || "", "CNPJ do embarque": l.cnpj_embarque || "", "Razão social do embarque": l.razao_embarque || "",
         "Nome fantasia": l.fantasia || "", "Segmento": l.segmento || "", "Cidade/UF": l.cidade_uf || "", "Contato": l.contato || "", "Telefone": foneTxt(l.telefone), "E-mail": API.limparEmail(l.email),
         "Todos os telefones": telefonesDe(l).filter(t => !t.errado).map(t => foneTxt(t.n)).join("; "),
         "Contatos que funcionam": [...marcas(l).ok].map(c => /^\d+$/.test(c) ? foneTxt(c) : c).join("; "),
