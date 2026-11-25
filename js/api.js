@@ -206,15 +206,19 @@
         const lote = db.batch();
         const exec = !dados.time && dados.cargo === "Executivo";
         const sigla = dados.time ? "" : exec ? siglaExecutivo(uid) : dados.sigla.toUpperCase();
+        let novaSigla = false;
         lote.set(db.doc("perfis/" + uid), { nome: dados.nome, email, celular: dados.celular, cargo: dados.time ? "Inside Sales" : (dados.cargo || "Representante"),
           papel: "representante", situacao: "pendente", emailVerificado: false, siglaPrincipal: sigla, criadoEm: TS() });
         if (sigla) {
           const ref = db.doc("unidades/" + sigla);
           const existe = await ref.get().then(s => s.exists).catch(() => false);
+          novaSigla = !existe && !exec;
           if (!existe) lote.set(ref, { sigla, cidade_uf: dados.cidade_uf, regiao: dados.regiao, pedidoAtual: null, criadaEm: TS(), ...(exec ? { nome: nomeCarteira(dados.nome), tipo: "executivo" } : {}) });
           lote.set(db.doc(`acessos/${uid}_${sigla}`), { uid, sigla, situacao: "pendente", principal: true, nome: dados.nome, email, criadoEm: TS() });
         }
         await lote.commit();
+        // Unidade nova: guarda cidade e região na lista pública de siglas (o próximo cadastro da unidade se preenche sozinho).
+        if (novaSigla) api.gravarSigla(sigla, dados.cidade_uf, dados.regiao);
         return { confirmar: false };
       },
       // Convite do dono da unidade: qualquer pessoa com o link lê (o código sorteado é a chave).
@@ -295,9 +299,11 @@
           if (ja.data().situacao === "recusado") return acesso.update({ situacao: "pendente" }); // pedido de novo
           return; // já pedido ou já liberado
         }
-        if (!(await ref.get()).exists) lote.set(ref, { sigla, cidade_uf: dados.cidade_uf, regiao: dados.regiao, pedidoAtual: null, criadaEm: TS() });
+        const nova = !(await ref.get()).exists;
+        if (nova) lote.set(ref, { sigla, cidade_uf: dados.cidade_uf, regiao: dados.regiao, pedidoAtual: null, criadaEm: TS() });
         lote.set(acesso, { uid: u.uid, sigla, situacao: "pendente", principal: false, nome: cacheNome, email: u.email.toLowerCase(), criadoEm: TS() });
         await lote.commit();
+        if (nova) api.gravarSigla(sigla, dados.cidade_uf, dados.regiao);
       },
       // Unidade recusada: pede de novo (volta para aguardando o time).
       async pedirDeNovo(sigla) { await db.doc(`acessos/${auth.currentUser.uid}_${sigla}`).update({ situacao: "pendente" }); },
@@ -306,6 +312,29 @@
       async perfis() { return (await db.collection("perfis").get()).docs.map(doc); },
       async acessos() { return (await db.collection("acessos").get()).docs.map(doc); },
       async unidades() { return (await db.collection("unidades").get()).docs.map(doc); },
+      // Cidade e região de uma unidade já cadastrada, pela sigla. A lista "siglas" é pública e guarda só esses dois campos,
+      // para o cadastro se preencher sozinho antes de a pessoa ter login.
+      async infoSigla(sigla) {
+        sigla = String(sigla || "").toUpperCase();
+        if (!/^[A-Z0-9]{2,10}$/.test(sigla) || sigla.startsWith("EX")) return null;
+        try { const s = await db.doc("siglas/" + sigla).get(); return s.exists ? s.data() : null; } catch (e) { return null; }
+      },
+      async gravarSigla(sigla, cidade_uf, regiao) { try { await db.doc("siglas/" + sigla).set({ cidade_uf, regiao }); } catch (e) { /* só ajuda o próximo cadastro: se falhar, nada muda */ } },
+      // Administrador: deixa a lista pública de siglas igual às unidades (cidade e região). Roda uma vez por sessão.
+      async sincronizarSiglas(unidades) {
+        try {
+          const atuais = {};
+          (await db.collection("siglas").get()).docs.forEach(d => { atuais[d.id] = d.data(); });
+          const falta = (unidades || []).filter(u => !u.tipo && /^[A-Z0-9]{2,10}$/.test(u.sigla || "") && u.cidade_uf && u.regiao
+            && (!atuais[u.sigla] || atuais[u.sigla].cidade_uf !== u.cidade_uf || atuais[u.sigla].regiao !== u.regiao));
+          for (let i = 0; i < falta.length; i += 400) {
+            const lote = db.batch();
+            falta.slice(i, i + 400).forEach(u => lote.set(db.doc("siglas/" + u.sigla), { cidade_uf: u.cidade_uf, regiao: u.regiao }));
+            await lote.commit();
+          }
+          return falta.length;
+        } catch (e) { return 0; }
+      },
       async atualizarPerfil(id, dados) { await db.doc("perfis/" + id).update(dados); },
       // dono = { uid, nome }: ao liberar, a pessoa vira dona da unidade (unidade ainda sem dono).
       async atualizarAcesso(id, situacao, dono) {
@@ -414,7 +443,7 @@
       },
       async atualizarPedido(id, dados) {
         const d = { ...dados };
-        ["enviada_em", "concluida_em"].forEach(k => { if (d[k] === true) d[k] = TS(); });
+        ["enviada_em", "concluida_em", "avisado_em", "cobrado_em"].forEach(k => { if (d[k] === true) d[k] = TS(); });
         await db.doc("pedidos/" + id).update(d);
       },
       // Carteiras do time: quem cuida de cada região (null = livre, quem puxar fica com o pedido).
@@ -422,7 +451,24 @@
         try { const d = await db.doc("config/carteiras").get(); return d.exists ? d.data() : { regioes: {}, substituto: null }; }
         catch (e) { return { regioes: {}, substituto: null }; }
       },
-      async salvarCarteiras(dados) { await db.doc("config/carteiras").set({ regioes: dados.regioes, substituto: dados.substituto || null, atualizado_em: TS(), atualizado_por: cacheNome }); },
+      // Cada pessoa do time pode ter o seu substituto ({ uid: { para, ate } }). "substituto" (um só) era o formato antigo.
+      async salvarCarteiras(dados) { await db.doc("config/carteiras").set({ regioes: dados.regioes, substitutos: dados.substitutos || {}, substituto: null, atualizado_em: TS(), atualizado_por: cacheNome }); },
+      // Resumo por região e segmento (só números) para sugerir segmentos no pedido. O administrador publica; todos leem.
+      async segmentosRegiao() { try { const d = await db.doc("config/segmentos").get(); return d.exists ? d.data() : null; } catch (e) { return null; } },
+      async salvarSegmentos(regioes) { await db.doc("config/segmentos").set({ regioes, atualizado_em: TS() }); },
+      // Coordenador e gerente: carteiras dos executivos que respondem a ele (o administrador monta a equipe em Cadastros).
+      async equipeComercial() {
+        const u = auth.currentUser; if (!u) return [];
+        return (await db.collection("unidades").where("gestores", "array-contains", u.uid).get()).docs.map(doc);
+      },
+      async salvarEquipeComercial(uid, dadosPerfil, unidades) {
+        const lote = db.batch();
+        lote.update(db.doc("perfis/" + uid), dadosPerfil);
+        (unidades || []).forEach(x => lote.update(db.doc("unidades/" + x.sigla), { gestores: x.gestores, exec_nome: x.exec_nome, exec_nivel: x.exec_nivel, exec_gestor: x.exec_gestor || null }));
+        await lote.commit();
+      },
+      // Dono: só ele pede a próxima base (true) ou todos da unidade (false).
+      async definirQuemPede(sigla, soDono) { await db.doc("unidades/" + sigla).update({ so_dono_pede: !!soDono }); },
 
       // Time: coloca os leads da planilha dentro do pedido (máximo de 10 por pedido).
       async incluirLeads(pedidoId, linhas, extra) {
@@ -511,13 +557,24 @@
         { id: "r3", nome: "Ana Teste", email: "rec.ana@voeazul.com.br", celular: "81900000003", papel: "representante", situacao: "pendente", emailVerificado: true, siglaPrincipal: "REC", criadoEm: iso(agora - 1 * dia) },
         // Equipe da CPQ (dona: Marina): uma vendedora liberada e um vendedor aguardando a dona.
         { id: "r4", nome: "Carla Vendedora", email: "cpq.carla@voeazul.com.br", celular: "19900000004", cargo: "Representante", papel: "representante", situacao: "aprovado", emailVerificado: false, siglaPrincipal: "CPQ", criadoEm: iso(agora - 6 * dia), convite: "DEMOusado00000000000000" },
+        // Equipe comercial: Gerson (gerente) → Cora (coordenadora) → Edu e Elisa (executivos).
+        { id: "g1", nome: "Gerson Gerente", email: "gerson.gerente@voeazul.com.br", celular: "11900000011", cargo: "Executivo", nivel: "Gerente", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "EXG1", criadoEm: iso(agora - 40 * dia) },
+        { id: "c1", nome: "Cora Coordenadora", email: "cora.coord@voeazul.com.br", celular: "11900000012", cargo: "Executivo", nivel: "Coordenador", gestor_uid: "g1", gestor_nome: "Gerson Gerente", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "EXC1", criadoEm: iso(agora - 35 * dia) },
+        { id: "e1", nome: "Edu Executivo", email: "edu.exec@voeazul.com.br", celular: "11900000013", cargo: "Executivo", nivel: "Executivo", gestor_uid: "c1", gestor_nome: "Cora Coordenadora", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "EXE1", criadoEm: iso(agora - 30 * dia) },
+        { id: "e2", nome: "Elisa Executiva", email: "elisa.exec@voeazul.com.br", celular: "41900000014", cargo: "Executivo", nivel: "Executivo", gestor_uid: "c1", gestor_nome: "Cora Coordenadora", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "EXE2", criadoEm: iso(agora - 28 * dia) },
+        { id: "e3", nome: "Ivo Novato", email: "ivo.exec@voeazul.com.br", celular: "11900000015", cargo: "Executivo", papel: "representante", situacao: "aprovado", emailVerificado: true, siglaPrincipal: "EXE3", criadoEm: iso(agora - 3 * dia) },
         { id: "r5", nome: "Bruno Vendedor", email: "cpq.bruno@voeazul.com.br", celular: "19900000005", cargo: "Representante", papel: "representante", situacao: "pendente", emailVerificado: false, siglaPrincipal: "CPQ", criadoEm: iso(agora - 0.2 * dia) }
       ],
       unidades: [
         { id: "CPQ", sigla: "CPQ", cidade_uf: "Campinas/SP", regiao: "Sudeste", pedidoAtual: "CPQ-1", dono_uid: "r1", dono_nome: "Marina Exemplo" },
         { id: "VCP", sigla: "VCP", cidade_uf: "Valinhos/SP", regiao: "Sudeste", pedidoAtual: null },
         { id: "CWB", sigla: "CWB", cidade_uf: "Curitiba/PR", regiao: "Sul", pedidoAtual: "CWB-1", dono_uid: "r2", dono_nome: "Paulo Modelo" },
-        { id: "REC", sigla: "REC", cidade_uf: "Recife/PE", regiao: "Nordeste", pedidoAtual: null }
+        { id: "REC", sigla: "REC", cidade_uf: "Recife/PE", regiao: "Nordeste", pedidoAtual: null },
+        { id: "EXG1", sigla: "EXG1", nome: "Carteira de Gerson Gerente", tipo: "executivo", cidade_uf: "São Paulo/SP", regiao: "Sudeste", pedidoAtual: null, gestores: [], exec_nome: "Gerson Gerente", exec_nivel: "Gerente", exec_gestor: null },
+        { id: "EXC1", sigla: "EXC1", nome: "Carteira de Cora Coordenadora", tipo: "executivo", cidade_uf: "São Paulo/SP", regiao: "Sudeste", pedidoAtual: null, gestores: ["g1"], exec_nome: "Cora Coordenadora", exec_nivel: "Coordenador", exec_gestor: "Gerson Gerente" },
+        { id: "EXE1", sigla: "EXE1", nome: "Carteira de Edu Executivo", tipo: "executivo", cidade_uf: "São Paulo/SP", regiao: "Sudeste", pedidoAtual: "EXE1-1", gestores: ["c1", "g1"], exec_nome: "Edu Executivo", exec_nivel: "Executivo", exec_gestor: "Cora Coordenadora" },
+        { id: "EXE2", sigla: "EXE2", nome: "Carteira de Elisa Executiva", tipo: "executivo", cidade_uf: "Curitiba/PR", regiao: "Sul", pedidoAtual: "EXE2-1", gestores: ["c1", "g1"], exec_nome: "Elisa Executiva", exec_nivel: "Executivo", exec_gestor: "Cora Coordenadora" },
+        { id: "EXE3", sigla: "EXE3", nome: "Carteira de Ivo Novato", tipo: "executivo", cidade_uf: "Campinas/SP", regiao: "Sudeste", pedidoAtual: null }
       ],
       acessos: [
         { id: "r1_CPQ", uid: "r1", sigla: "CPQ", situacao: "aprovado", principal: true, nome: "Marina Exemplo", email: "cpq.marina@voeazul.com.br" },
@@ -525,7 +582,12 @@
         { id: "r2_CWB", uid: "r2", sigla: "CWB", situacao: "aprovado", principal: true, nome: "Paulo Modelo", email: "cwb.paulo@voeazul.com.br" },
         { id: "r3_REC", uid: "r3", sigla: "REC", situacao: "pendente", principal: true, nome: "Ana Teste", email: "rec.ana@voeazul.com.br" },
         { id: "r4_CPQ", uid: "r4", sigla: "CPQ", situacao: "aprovado", principal: true, nome: "Carla Vendedora", email: "cpq.carla@voeazul.com.br" },
-        { id: "r5_CPQ", uid: "r5", sigla: "CPQ", situacao: "pendente", principal: true, nome: "Bruno Vendedor", email: "cpq.bruno@voeazul.com.br" }
+        { id: "r5_CPQ", uid: "r5", sigla: "CPQ", situacao: "pendente", principal: true, nome: "Bruno Vendedor", email: "cpq.bruno@voeazul.com.br" },
+        { id: "g1_EXG1", uid: "g1", sigla: "EXG1", situacao: "aprovado", principal: true, nome: "Gerson Gerente", email: "gerson.gerente@voeazul.com.br" },
+        { id: "c1_EXC1", uid: "c1", sigla: "EXC1", situacao: "aprovado", principal: true, nome: "Cora Coordenadora", email: "cora.coord@voeazul.com.br" },
+        { id: "e1_EXE1", uid: "e1", sigla: "EXE1", situacao: "aprovado", principal: true, nome: "Edu Executivo", email: "edu.exec@voeazul.com.br" },
+        { id: "e2_EXE2", uid: "e2", sigla: "EXE2", situacao: "aprovado", principal: true, nome: "Elisa Executiva", email: "elisa.exec@voeazul.com.br" },
+        { id: "e3_EXE3", uid: "e3", sigla: "EXE3", situacao: "aprovado", principal: true, nome: "Ivo Novato", email: "ivo.exec@voeazul.com.br" }
       ],
       convites: [
         { id: "DEMOusado00000000000000", sigla: "CPQ", email: "cpq.carla@voeazul.com.br", nome: "Carla Vendedora", celular: "19900000004", criado_por: "r1", criado_por_nome: "Marina Exemplo", criado_em: iso(agora - 7 * dia), usado: true, usado_por: "r4", usado_em: iso(agora - 6 * dia) },
@@ -562,6 +624,22 @@
     db.pedidos.push({ id: "CWB-1", sigla: "CWB", regiao: "Sul", cidade_uf: "Curitiba/PR", solicitante: "r2", solicitante_nome: "Paulo Modelo",
       segmentos: ["Farmácias", "Laboratórios clínicos"], cidades: ["Curitiba/PR", "São José dos Pinhais/PR"], empresas: "CNAE 4771-7/01", situacao: "Nova", previsao: proximaSexta(),
       responsavel: null, observacao_time: null, leads: {}, liberada: false, criada_em: iso(agora - 1 * dia), enviada_em: null, concluida_em: null });
+    // Carteiras dos executivos de exemplo (para a Minha equipe da coordenadora e do gerente, e para o Painel por segmento).
+    const leadsExec = (lista, cidade, seg) => Object.fromEntries(lista.map(([empresa, status, segmento, diasAtras, tent, retorno], i) => ["l" + i, {
+      empresa, cnpj: `11.111.111/0001-${String(20 + i).padStart(2, "0")}`, segmento: segmento || seg, cidade_uf: cidade, contato: "Contato fictício",
+      telefone: `1198000${String(2000 + i)}`, email: `exec${i}@exemplo.com.br`, status, data_contato: status === "Novo" ? null : hojeMenos(diasAtras),
+      contato_valido: status === "Novo" ? "" : "Sim", contatos_ok: status === "Novo" || status === "Prospecção" ? [] : [`1198000${String(2000 + i)}`],
+      atualizado_em: iso(agora - diasAtras * dia), tentativas: tent, ultima_tentativa: tent ? iso(agora - diasAtras * dia) : null, ...(retorno !== undefined ? { retorno: hojeMenos(retorno) } : {}) }]));
+    db.pedidos.push({ id: "EXE1-1", sigla: "EXE1", regiao: "Sudeste", cidade_uf: "São Paulo/SP", solicitante: "e1", solicitante_nome: "Edu Executivo",
+      segmentos: ["Farmácias", "Supermercados"], cidades: ["São Paulo/SP"], empresas: null, situacao: "Enviada", previsao: hojeMenos(15), responsavel: "Time Inside Sales", observacao_time: null,
+      leads: leadsExec([["Drogaria Bem Estar", "Embarque iniciado", "Farmácias", 3, 3], ["Farma Popular Centro", "Em negociação", "Farmácias", 2, 2, 2], ["Mercado Bom Preço", "Novo", "Supermercados", 18, 0],
+        ["Supermercado Vila Nova", "Prospecção", "Supermercados", 12, 1], ["Drogaria Saúde Já", "Em negociação", "Farmácias", 4, 2, -2], ["Atacadão do Bairro", "Sem interesse", "Supermercados", 6, 2]], "São Paulo/SP"),
+      liberada: false, criada_em: iso(agora - 20 * dia), enviada_em: iso(agora - 19 * dia), avisado_em: iso(agora - 19 * dia), concluida_em: null });
+    db.pedidos.push({ id: "EXE2-1", sigla: "EXE2", regiao: "Sul", cidade_uf: "Curitiba/PR", solicitante: "e2", solicitante_nome: "Elisa Executiva",
+      segmentos: ["Farmácias"], cidades: ["Curitiba/PR"], empresas: null, situacao: "Enviada", previsao: hojeMenos(9), responsavel: "Van Exemplo", observacao_time: null,
+      leads: leadsExec([["Farmácia Pinheiro", "Em implantação", null, 2, 3], ["Drogaria Araucária", "Embarque iniciado", null, 1, 2], ["Farma Sul", "Prospecção", null, 3, 1, 1],
+        ["Botica Curitibana", "Contato inválido", null, 5, 2], ["Drogaria Boqueirão", "Novo", null, 9, 0]], "Curitiba/PR", "Farmácias"),
+      liberada: false, criada_em: iso(agora - 12 * dia), enviada_em: iso(agora - 11 * dia), avisado_em: iso(agora - 11 * dia), concluida_em: null });
     CHAVES.slice(0, 8).forEach((k, i) => {
       db.historico.push({ id: "h" + seq++, pedido: "CPQ-1", lead: k, tipo: "recebido", texto: "Lead recebido no pedido CPQ-1", autor: "t1", autor_nome: "Time Inside Sales", criado_em: iso(agora - 12 * dia), editado_em: null });
       if (sts[i] !== "Novo") db.historico.push({ id: "h" + seq++, pedido: "CPQ-1", lead: k, tipo: "status", texto: `Status: Novo → ${sts[i]}`, autor: "r1", autor_nome: "Marina Exemplo", criado_em: iso(agora - (8 - i) * dia), editado_em: null });
@@ -574,6 +652,17 @@
     const ehTime = () => eu() && ["time", "admin"].includes(eu().papel) && eu().situacao === "aprovado";
     const ehAdmin = () => ehTime() && eu().papel === "admin";
     const usa = (sigla) => ehTime() || db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla && a.situacao === "aprovado");
+    const acompanha = (sigla) => !!eu() && eu().situacao === "aprovado" && ((db.unidades.find(u => u.sigla === sigla) || {}).gestores || []).includes(usuario.id);
+    // Resumo por região e segmento, como o administrador publica (o demo calcula na hora).
+    const resumoDemo = () => {
+      const r = {}, n = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+      db.pedidos.forEach(p => Object.values(p.leads || {}).forEach(l => {
+        const segs = p.segmentos || [], sg = segs.find(x => n(x) === n(l.segmento)) || (segs.length === 1 ? segs[0] : "") || l.segmento || "Sem segmento";
+        const o = ((r[p.regiao] = r[p.regiao] || {})[sg] = r[p.regiao][sg] || { e: 0, n: 0, b: 0 });
+        o.e++; if (["Em negociação", "Em implantação", "Embarque iniciado", "Cliente Azul"].includes(l.status)) o.n++; if (["Embarque iniciado", "Cliente Azul"].includes(l.status)) o.b++;
+      }));
+      return r;
+    };
     const donoDe = (sigla) => !!eu() && eu().situacao === "aprovado" && db.acessos.some(a => a.uid === usuario.id && a.sigla === sigla && a.situacao === "aprovado") && (db.unidades.find(u => u.sigla === sigla) || {}).dono_uid === usuario.id;
     const negar = () => { const e = new Error("Você não tem permissão para esta ação."); e.code = "permission-denied"; throw e; };
     const pedidoLiberado = (id) => { const p = db.pedidos.find(x => x.id === id); return !p || ["Concluída", "Sem leads", "Cancelada"].includes(p.situacao) || (p.situacao === "Enviada" && p.liberada); };
@@ -644,6 +733,9 @@
       async perfis() { if (!ehTime()) negar(); return copia(db.perfis); },
       async acessos() { if (!ehTime()) negar(); return copia(db.acessos); },
       async unidades() { return copia(db.unidades); },
+      async infoSigla(sigla) { const u = db.unidades.find(x => x.sigla === String(sigla || "").toUpperCase() && !x.tipo); return u ? { cidade_uf: u.cidade_uf, regiao: u.regiao } : null; },
+      async gravarSigla() { /* no modo demonstração a lista vem das próprias unidades */ },
+      async sincronizarSiglas() { return 0; },
       async atualizarPerfil(id, dados) { if (!ehAdmin()) negar(); Object.assign(db.perfis.find(p => p.id === id), dados); },
       async atualizarAcesso(id, situacao, dono) {
         if (!ehAdmin()) negar(); const a = db.acessos.find(x => x.id === id); a.situacao = situacao;
@@ -686,7 +778,7 @@
       observar() { return () => {}; },
       async pedidos(siglas, regioes) {
         if (!siglas && !regioes && !ehAdmin()) negar();
-        const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && usa(p.sigla) : regioes ? ehTime() && regioes.includes(p.regiao) : ehAdmin());
+        const lista = db.pedidos.filter(p => siglas ? siglas.includes(p.sigla) && (usa(p.sigla) || acompanha(p.sigla)) : regioes ? ehTime() && regioes.includes(p.regiao) : ehAdmin());
         return copia(lista).sort((a, b) => String(b.criada_em).localeCompare(String(a.criada_em)));
       },
       leadsDe: achatar,
@@ -695,6 +787,7 @@
         if (!usa(dados.sigla)) negar();
         const u = db.unidades.find(x => x.sigla === dados.sigla);
         if (u.pedidoAtual && !pedidoLiberado(u.pedidoAtual)) negar();
+        if (u.so_dono_pede && u.dono_uid && u.dono_uid !== usuario.id) negar();
         const id = dados.sigla + "-" + (db.pedidos.filter(p => p.sigla === dados.sigla).length + 1);
         db.pedidos.push({ id, sigla: dados.sigla, regiao: dados.regiao, cidade_uf: dados.cidade_uf, solicitante: usuario.id, solicitante_nome: eu().nome,
           segmentos: dados.segmentos, cidades: dados.cidades, empresas: dados.empresas || null, situacao: "Nova", previsao: proximaSexta(),
@@ -704,11 +797,20 @@
         return { id, previsao: proximaSexta() };
       },
       async carteiras() { return copia(db.carteiras); },
-      async salvarCarteiras(dados) { await espera(); if (!ehAdmin()) negar(); db.carteiras = { regioes: dados.regioes, substituto: dados.substituto || null, atualizado_em: new Date().toISOString(), atualizado_por: eu().nome }; },
+      async salvarCarteiras(dados) { await espera(); if (!ehAdmin()) negar(); db.carteiras = { regioes: dados.regioes, substitutos: dados.substitutos || {}, substituto: null, atualizado_em: new Date().toISOString(), atualizado_por: eu().nome }; },
+      async segmentosRegiao() { return db.segmentos ? copia(db.segmentos) : { regioes: resumoDemo() }; },
+      async salvarSegmentos(regioes) { if (!ehAdmin()) negar(); db.segmentos = { regioes: copia(regioes), atualizado_em: new Date().toISOString() }; },
+      async equipeComercial() { if (!eu()) return []; return copia(db.unidades.filter(u => (u.gestores || []).includes(usuario.id))); },
+      async salvarEquipeComercial(uid, dadosPerfil, unidades) {
+        await espera(); if (!ehAdmin()) negar();
+        Object.assign(db.perfis.find(p => p.id === uid), dadosPerfil);
+        (unidades || []).forEach(x => Object.assign(db.unidades.find(u => u.sigla === x.sigla), { gestores: x.gestores, exec_nome: x.exec_nome, exec_nivel: x.exec_nivel, exec_gestor: x.exec_gestor || null }));
+      },
+      async definirQuemPede(sigla, soDono) { await espera(); if (!donoDe(sigla)) negar(); db.unidades.find(u => u.sigla === sigla).so_dono_pede = !!soDono; },
       async atualizarPedido(id, dados) {
         if (!ehTime()) negar();
         const d = { ...dados };
-        ["enviada_em", "concluida_em"].forEach(k => { if (d[k] === true) d[k] = new Date().toISOString(); });
+        ["enviada_em", "concluida_em", "avisado_em", "cobrado_em"].forEach(k => { if (d[k] === true) d[k] = new Date().toISOString(); });
         Object.assign(db.pedidos.find(p => p.id === id), d);
       },
       async incluirLeads(pedidoId, linhas, extra) {

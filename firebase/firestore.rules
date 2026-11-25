@@ -36,6 +36,11 @@ service cloud.firestore {
       return aprovado() && exists(caminhoAcesso(sigla)) && get(caminhoAcesso(sigla)).data.situacao == 'aprovado';
     }
     // Dono da unidade: o primeiro representante aprovado (o administrador pode trocar). Convida e aprova a equipe da unidade.
+    // Coordenador e gerente: consultam as carteiras dos executivos que respondem a eles (lista "gestores" da carteira).
+    function acompanha(sigla) {
+      return aprovado() && sigla is string && sigla != ''
+        && request.auth.uid in get(/databases/$(database)/documents/unidades/$(sigla)).data.get('gestores', []);
+    }
     function donoDe(sigla) {
       return sigla is string && sigla != '' && usaUnidade(sigla)
         && get(/databases/$(database)/documents/unidades/$(sigla)).data.get('dono_uid', '') == request.auth.uid;
@@ -54,10 +59,16 @@ service cloud.firestore {
     // Administrador vê todas. O time vê só as regiões da carteira dele, as que está cobrindo como substituto
     // (até a data combinada) e as regiões sem responsável (livres). Sem carteiras salvas, tudo é livre.
     function caminhoCarteiras() { return /databases/$(database)/documents/config/carteiras; }
-    function substituindo(c, uid) {
-      let s = c.get('substituto', null);
-      return s != null && s.get('de', null) == uid && s.get('para', null) != null && s.para.get('uid', null) == request.auth.uid
+    // Cada pessoa do time pode ter o seu substituto: substitutos = { uid: { para: { uid, nome, celular }, ate: 'AAAA-MM-DD' } }.
+    // "substituto" (um só: { de, para, ate }) é o formato antigo e continua valendo.
+    function cobreAte(s) {
+      return s != null && s.get('para', null) != null && s.para.get('uid', null) == request.auth.uid
         && (s.get('ate', null) == null || request.time < timestamp.value(s.ate + 'T23:59:59-03:00'));
+    }
+    function substituindo(c, uid) {
+      let antigo = c.get('substituto', null);
+      return (uid is string && cobreAte(c.get('substitutos', {}).get(uid, null)))
+        || (antigo != null && antigo.get('de', null) == uid && cobreAte(antigo));
     }
     function regiaoLivreOuMinha(c, regiao) {
       let x = c.regioes.get(regiao, null);
@@ -78,7 +89,7 @@ service cloud.firestore {
     function camposDoRep() {
       return ['status', 'data_contato', 'contato_valido', 'atualizado_em', 'retorno', 'retorno_hora', 'lembrete', 'tentativas',
               'ultima_tentativa', 'motivo', 'motivo_outro', 'tentar_em', 'volume', 'destinos', 'transportadora', 'tel_errados',
-              'contatos_ok', 'contatos_nao', 'cnpj_embarque', 'razao_embarque'];
+              'contatos_ok', 'contatos_nao', 'cnpj_embarque', 'razao_embarque', 'cuida_uid', 'cuida_nome'];
     }
     function motivosPerda() { return ['', 'Já usa outra transportadora', 'Achou o preço alto', 'Não faz envios', 'Sem volume agora', 'Decisor não atende', 'Outro motivo']; }
     function dataOuVazio(v) { return v == null || (v is string && (v == '' || v.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))); }
@@ -116,8 +127,12 @@ service cloud.firestore {
 
       allow update: if
         // o administrador aprova, recusa, exclui (fica na aba Excluídos), muda o papel e corrige nome/celular
-        (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao', 'excluido_em', 'excluido_por'])
+        (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nome', 'celular', 'cargo', 'papel', 'situacao', 'excluido_em', 'excluido_por', 'nivel', 'gestor_uid', 'gestor_nome'])
           && request.resource.data.papel in ['representante', 'time', 'admin']
+          // equipe comercial: nível do executivo e a quem ele responde
+          && request.resource.data.get('nivel', 'Executivo') in ['Executivo', 'Coordenador', 'Gerente']
+          && (request.resource.data.get('gestor_uid', null) == null || (request.resource.data.gestor_uid is string && request.resource.data.gestor_uid != uid))
+          && textoOuNulo(request.resource.data.get('gestor_nome', null), 120)
           && request.resource.data.situacao in ['pendente', 'aprovado', 'recusado', 'excluido'])
         // o dono da unidade aprova ou recusa quem se cadastrou na unidade dele (representante aguardando)
         || (donoDe(resource.data.siglaPrincipal) && request.auth.uid != uid
@@ -151,13 +166,37 @@ service cloud.firestore {
         (ehTime() && veRegiao(resource.data.get('regiao', null)) && veRegiao(request.resource.data.get('regiao', null))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome']))
         // só o administrador escolhe o dono da unidade
-        || (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome', 'dono_uid', 'dono_nome'])
+        || (ehAdmin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cidade_uf', 'regiao', 'pedidoAtual', 'nome', 'dono_uid', 'dono_nome', 'gestores', 'exec_nome', 'exec_nivel', 'exec_gestor'])
           && (request.resource.data.get('dono_uid', null) == null || request.resource.data.dono_uid is string)
-          && textoOuNulo(request.resource.data.get('dono_nome', null), 120))
+          && textoOuNulo(request.resource.data.get('dono_nome', null), 120)
+          // carteira de executivo: quem a acompanha (coordenador e gerente acima dele)
+          && request.resource.data.get('gestores', []) is list && request.resource.data.get('gestores', []).size() <= 6
+          && textoOuNulo(request.resource.data.get('exec_nome', null), 120)
+          && textoOuNulo(request.resource.data.get('exec_nivel', null), 20)
+          && textoOuNulo(request.resource.data.get('exec_gestor', null), 120))
+        // o dono escolhe quem pede a próxima base: só ele (true) ou todos da unidade (false)
+        || (donoDe(sigla)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['so_dono_pede'])
+          && request.resource.data.so_dono_pede is bool)
         // o representante só troca o pedido atual, e só no mesmo envio que cria o pedido novo
         || (usaUnidade(sigla)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pedidoAtual'])
+          && (resource.data.get('so_dono_pede', false) != true || resource.data.get('dono_uid', '') == request.auth.uid)
           && podePedirNovo(sigla, resource.data.pedidoAtual, request.resource.data.pedidoAtual));
+      allow delete: if ehAdmin();
+    }
+
+    // Lista pública de siglas: só cidade e região de cada unidade, para o cadastro se preencher sozinho antes do login.
+    match /siglas/{sigla} {
+      allow get: if true;
+      allow list: if ehTime();
+      allow create: if logado() && sigla.matches('^[A-Z0-9]{2,10}$')
+        && request.resource.data.keys().hasOnly(['cidade_uf', 'regiao'])
+        && exists(/databases/$(database)/documents/unidades/$(sigla))
+        && request.resource.data.cidade_uf == get(/databases/$(database)/documents/unidades/$(sigla)).data.cidade_uf
+        && request.resource.data.regiao == get(/databases/$(database)/documents/unidades/$(sigla)).data.regiao;
+      allow update: if ehTime() && request.resource.data.keys().hasOnly(['cidade_uf', 'regiao'])
+        && texto(request.resource.data.cidade_uf, 80) && request.resource.data.regiao in regioes();
       allow delete: if ehAdmin();
     }
 
@@ -255,6 +294,9 @@ service cloud.firestore {
         && novo.get('contatos_ok', []) is list && novo.get('contatos_ok', []).size() <= 150
         && novo.get('contatos_nao', []) is list && novo.get('contatos_nao', []).size() <= 150
         && embarqueOk(novo, velho)
+        // "Vou cuidar deste": a pessoa só pode se colocar como responsável pelo lead ou tirar o responsável.
+        && (novo.get('cuida_uid', '') == velho.get('cuida_uid', '') || novo.get('cuida_uid', '') == '' || novo.get('cuida_uid', '') == request.auth.uid)
+        && textoOuNulo(novo.get('cuida_nome', ''), 120)
         && novo.get('tentativas', 0) is int
         && (novo.get('tentativas', 0) == velho.get('tentativas', 0) || novo.get('tentativas', 0) == velho.get('tentativas', 0) + 1);
     }
@@ -268,6 +310,8 @@ service cloud.firestore {
         && novo.diff(velho).affectedKeys().hasOnly(camposDoRep())
         && extrasOk(novo, velho)
         && novo.status in statusLead()
+        // Sem interesse só depois de pelo menos uma tentativa (WhatsApp, ligação ou e-mail registrados)
+        && (novo.status != 'Sem interesse' || velho.status == 'Sem interesse' || novo.get('tentativas', 0) >= 1)
         && novo.get('contato_valido', '') in ['', 'Sim', 'Não']
         && contadorCerto(velho.status, novo.status)
         && request.resource.data.liberada == (request.resource.data.travando == 0)
@@ -276,7 +320,7 @@ service cloud.firestore {
 
     match /pedidos/{id} {
       // Time: só pedidos das regiões que ele vê (veRegiao). O app consulta região por região.
-      allow read: if veRegiao(resource.data.regiao) || usaUnidade(resource.data.sigla);
+      allow read: if veRegiao(resource.data.regiao) || usaUnidade(resource.data.sigla) || acompanha(resource.data.sigla);
 
       allow create: if (veRegiao(request.resource.data.get('regiao', null)) || usaUnidade(request.resource.data.sigla))
         && request.resource.data.keys().hasOnly(['sigla', 'regiao', 'cidade_uf', 'solicitante', 'solicitante_nome', 'segmentos', 'cidades', 'empresas',
@@ -336,11 +380,22 @@ service cloud.firestore {
     }
 
     // ---------- carteiras do time (quem cuida de cada região) ----------
-    // Todo mundo aprovado lê (o representante vê quem cuida da unidade dele); só o administrador muda.
-    match /config/carteiras {
-      allow read: if aprovado();
+    // Qualquer pessoa lê (o "Esqueci minha senha" e a tela de espera mostram quem do time atende cada região,
+    // antes de a pessoa estar aprovada); só o administrador muda. Guarda só nome, celular e o id de quem cuida de cada região.
+    // ---------- resumo por região e segmento (só números) ----------
+    // Sugere segmentos no pedido da unidade. Só o administrador publica; quem está aprovado lê.
+    match /config/segmentos {
+      allow get: if aprovado();
       allow write: if ehAdmin()
-        && request.resource.data.keys().hasOnly(['regioes', 'substituto', 'atualizado_em', 'atualizado_por'])
+        && request.resource.data.keys().hasOnly(['regioes', 'atualizado_em'])
+        && request.resource.data.regioes is map
+        && request.resource.data.atualizado_em == request.time;
+    }
+    match /config/carteiras {
+      allow get: if true;
+      allow write: if ehAdmin()
+        && request.resource.data.keys().hasOnly(['regioes', 'substituto', 'substitutos', 'atualizado_em', 'atualizado_por'])
+        && request.resource.data.get('substitutos', {}) is map && request.resource.data.get('substitutos', {}).size() <= 30
         && request.resource.data.regioes is map
         && request.resource.data.regioes.keys().hasOnly(regioes())
         && request.resource.data.atualizado_em == request.time;

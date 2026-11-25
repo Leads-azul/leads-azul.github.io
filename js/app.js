@@ -53,6 +53,19 @@
   const tentarDevido = (l) => l.status === "Sem interesse" && !!l.tentar_em && l.tentar_em <= hojeISO();
   const paraHoje = (l) => retornoDevido(l) || tentarDevido(l);
   const decidir = (l) => trava(l) && tentativasDe(l) >= N_DECIDIR;
+  // "Vou cuidar deste": quem da unidade está cuidando de cada lead.
+  const cuidaEu = () => ({ cuida_uid: E.perfil.id, cuida_nome: primeiroNome(E.perfil.nome) });
+  const meuLead = (l) => !l.cuida_uid || l.cuida_uid === E.perfil.id;
+  // A unidade tem mais gente (dono e vendedores)? Só aí faz sentido mostrar quem cuida de cada lead.
+  function temEquipe(sigla) {
+    if (ehTime()) return false;
+    const u = ((E.perfil && E.perfil.unidades) || []).find(x => x.sigla === sigla) || {};
+    if (u.tipo === "executivo") return false;
+    if (u.dono_uid && u.dono_uid !== E.perfil.id) return true;
+    const eq = (E.equipe || {})[sigla];
+    if (eq && (eq.pessoas || []).filter(p => p.situacao === "aprovado").length > 1) return true;
+    return (E.leads || []).some(l => l.sigla === sigla && l.cuida_uid && l.cuida_uid !== E.perfil.id);
+  }
   const haDias = (v) => { const d = dias(v); return d <= 0 ? "hoje" : d === 1 ? "ontem" : `há ${d} dias`; };
   const slug = (s) => norm(s).replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
   const segmentosDe = (p) => (p.segmentos || []).join(", ");
@@ -119,8 +132,8 @@
     return todos.length && todos.every(c => nao.has(c)) ? "Não" : "";
   }
   const botoesMarca = (c, item) => `<span class="marca" role="group" aria-label="Este contato funciona?">
-      <button type="button" class="marca-b sim" data-marca="ok" data-contato="${esc(c)}" aria-pressed="${!!item.ok}" title="Funciona" aria-label="Funciona">✓</button>
-      <button type="button" class="marca-b nao" data-marca="nao" data-contato="${esc(c)}" aria-pressed="${!!item.errado}" title="Não funciona" aria-label="Não funciona">✕</button></span>`;
+      <button type="button" class="marca-b sim" data-marca="ok" data-contato="${esc(c)}" aria-pressed="${!!item.ok}" title="Funciona">✓ Funciona</button>
+      <button type="button" class="marca-b nao" data-marca="nao" data-contato="${esc(c)}" aria-pressed="${!!item.errado}" title="Não funciona">✕ Não funciona</button></span>`;
   const DDD_UF = { 11: "SP", 12: "SP", 13: "SP", 14: "SP", 15: "SP", 16: "SP", 17: "SP", 18: "SP", 19: "SP", 21: "RJ", 22: "RJ", 24: "RJ", 27: "ES", 28: "ES",
     31: "MG", 32: "MG", 33: "MG", 34: "MG", 35: "MG", 37: "MG", 38: "MG", 41: "PR", 42: "PR", 43: "PR", 44: "PR", 45: "PR", 46: "PR", 47: "SC", 48: "SC", 49: "SC",
     51: "RS", 53: "RS", 54: "RS", 55: "RS", 61: "DF", 62: "GO", 63: "TO", 64: "GO", 65: "MT", 66: "MT", 67: "MS", 68: "AC", 69: "RO", 71: "BA", 73: "BA", 74: "BA", 75: "BA", 77: "BA",
@@ -144,10 +157,25 @@
   }
 
   let toastTimer;
-  function aviso(msg, erro) {
-    const t = document.getElementById("toast");
+  const $toast = document.getElementById("toast");
+  // aviso(msg, erro, desfazer): com "desfazer", o aviso ganha um botão Desfazer por alguns segundos (no lugar do "Tem certeza?").
+  function aviso(msg, erro, desfazer) {
+    const t = $toast;
+    // Com uma janela aberta, o aviso vai para dentro dela: senão fica escondido atrás da janela.
+    // (a confirmação "Tem certeza?" fica de fora: ela some logo e apagaria o aviso junto)
+    const dlg = [...document.querySelectorAll("dialog[open]")].filter(d => !d.classList.contains("confirmar")).pop();
+    if (t.parentNode !== (dlg || document.body)) (dlg || document.body).appendChild(t);
     t.textContent = msg; t.className = "toast ver" + (erro ? " erro" : "");
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "toast", erro ? 6000 : 3200);
+    if (desfazer) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "link-mini toast-desfazer"; b.textContent = "Desfazer";
+      b.addEventListener("click", async () => {
+        clearTimeout(toastTimer); t.className = "toast";
+        try { await desfazer(); } catch (e) { aviso(API.traduzir(e), true); }
+      });
+      t.append(" ", b);
+    }
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.className = "toast", erro ? 6000 : desfazer ? 9000 : 3200);
   }
 
   function opcoes(lista, atual, vazio) {
@@ -172,7 +200,7 @@
   const sobre = () => `${esc(TIME)} | ${esc(EMPRESA)}`;
   const ROTA = `<svg class="rota" viewBox="0 0 600 600" aria-hidden="true"><path d="M-40 520 C 160 420, 260 470, 360 300 S 560 120, 660 60" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2 10" stroke-linecap="round"/><path d="M-40 600 C 200 520, 330 560, 430 400 S 600 260, 680 210" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2 12" stroke-linecap="round" opacity=".6"/><g transform="translate(372 286) rotate(-38) scale(1.6)" fill="currentColor" stroke="none"><path d="M2 13l8-1 5-8h2l-2 8 5 1 2-2h1l-1 3 1 3h-1l-2-2-5 1 2 8h-2l-5-8-8-1z" transform="translate(-12 -12)"/></g></svg>`;
 
-  const chipSituacao = (s) => `<span class="situacao s-${slug(s)}">${esc(s)}</span>`;
+  const chipSituacao = (s) => `<span class="situacao s-${slug(s)}">${esc(situacaoTexto(s))}</span>`;
   const ponto = (s) => `<span class="ponto" style="background:${COR[s] || "#999"}"></span>`;
   const chipStatus = (s) => `<span class="chip-status" style="--c:${COR[s] || "#999"}">${esc(s)}</span>`;
 
@@ -180,17 +208,24 @@
   let guardaFechar = null;
   function abrir(html, ligar) {
     guardaFechar = null;
+    if ($janela.contains($toast)) document.body.appendChild($toast); // o aviso não pode sumir junto com a janela anterior
     $janela.innerHTML = html;
     if (!$janela.open) $janela.showModal();
     $janela.querySelectorAll("[data-fechar]").forEach(b => b.addEventListener("click", fechar));
     if (ligar) ligar($janela);
   }
+  // Android/Chrome: guarda o convite de instalação para o botão "Colocar na tela agora".
+  let instalarPrompt = null;
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); instalarPrompt = e; });
+  window.addEventListener("appinstalled", () => { instalarPrompt = null; });
+
   async function fechar() {
     if (guardaFechar) { const g = guardaFechar; guardaFechar = null; if (!(await g())) { guardaFechar = g; return; } }
     if ($janela.open) $janela.close();
   }
-  $janela.addEventListener("click", (e) => { if (e.target === $janela) fechar(); });
+  // Tocar fora da janela não fecha mais: no celular é fácil tocar fora sem querer e perder o que foi preenchido.
   $janela.addEventListener("cancel", (e) => { if (guardaFechar) { e.preventDefault(); fechar(); } });
+  $janela.addEventListener("close", () => { if ($janela.contains($toast)) document.body.appendChild($toast); });
 
   // ---- Confirmação de toda ação: "Tem certeza?" com o aviãozinho voando ao confirmar ----
   const $conf = document.createElement("dialog");
@@ -244,6 +279,51 @@
     });
   }
 
+  // escolher({ titulo, texto, opcoes: [{ id, rotulo, tipo }] }) -> id da opção escolhida (null se fechar). Para perguntas com mais de dois caminhos.
+  function escolher({ titulo, texto = "", opcoes }) {
+    return new Promise(resolve => {
+      $conf.innerHTML = `<div class="cf-corpo"><h2 id="cf-titulo">${esc(titulo)}</h2>${texto ? `<p>${texto}</p>` : ""}
+        <div class="cf-botoes cf-escolhas">${opcoes.map(o => `<button type="button" class="btn ${o.tipo === "primario" ? "btn-primario" : o.tipo === "perigo" ? "btn-perigo-leve" : ""}" data-escolha="${esc(o.id)}">${esc(o.rotulo)}</button>`).join("")}</div></div>`;
+      let feito = false;
+      const terminar = (v) => { if (feito) return; feito = true; resolve(v); if ($conf.open) $conf.close(); $conf.innerHTML = ""; };
+      $conf.querySelectorAll("[data-escolha]").forEach(b => b.onclick = () => terminar(b.dataset.escolha));
+      $conf.oncancel = (e) => { e.preventDefault(); terminar(null); };
+      $conf.onclick = (e) => { if (e.target === $conf) terminar(null); };
+      $conf.showModal();
+      ($conf.querySelector(".btn-primario") || $conf.querySelector("[data-escolha]")).focus();
+    });
+  }
+
+  // Celular ou computador: no computador, "Ligar" mostra o número em vez de abrir um link de telefone que não faz nada.
+  const ehCelular = () => (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+
+  // Mostrar a senha: todo campo de senha ganha um botão "Mostrar" (inclusive os que aparecem depois, em janelas e telas novas).
+  function olhoSenha(raiz) {
+    (raiz || document).querySelectorAll('input[type="password"]:not([data-olho])').forEach(inp => {
+      inp.dataset.olho = "1";
+      const caixa = document.createElement("span"); caixa.className = "senha-caixa";
+      inp.parentNode.insertBefore(caixa, inp); caixa.appendChild(inp);
+      const b = document.createElement("button"); b.type = "button"; b.className = "senha-olho"; b.textContent = "Mostrar";
+      b.setAttribute("aria-label", "Mostrar a senha"); b.setAttribute("aria-pressed", "false");
+      b.addEventListener("click", () => {
+        const ver = inp.type === "password"; inp.type = ver ? "text" : "password";
+        b.textContent = ver ? "Ocultar" : "Mostrar"; b.setAttribute("aria-pressed", String(ver)); b.setAttribute("aria-label", ver ? "Ocultar a senha" : "Mostrar a senha");
+        inp.focus();
+      });
+      caixa.appendChild(b);
+    });
+  }
+  new MutationObserver(() => olhoSenha()).observe(document.body, { childList: true, subtree: true });
+
+  // Executivo, coordenador e gerente trabalham numa carteira, não numa unidade: os textos acompanham.
+  const ehExec = () => !!(E.perfil && E.perfil.cargo === "Executivo");
+  const suaU = () => ehExec() ? "sua carteira" : "sua unidade";
+  const estaU = () => ehExec() ? "Sua carteira" : "Esta unidade";
+
+  // Situação do pedido em palavras simples para quem pede (o time continua vendo os nomes de trabalho).
+  const SITUACAO_REP = { "Nova": "Recebido pelo time", "Em extração": "Separando seus leads", "Enviada": "Seus leads chegaram", "Concluída": "Pedido fechado", "Sem leads": "Sem leads encontrados", "Cancelada": "Cancelado" };
+  const situacaoTexto = (s) => ehTime() ? s : (SITUACAO_REP[s] || s);
+
   async function ocupado(botao, fn) {
     const texto = botao.textContent;
     botao.disabled = true; botao.textContent = "Aguarde…";
@@ -287,7 +367,10 @@
         let salva = null; try { salva = localStorage.getItem("portal-unidade"); } catch (e) { /* ignora */ }
         E.u = minhasUnidades().some(x => x.sigla === (E.u || salva)) ? (E.u || salva) : minhasUnidades()[0].sigla;
       }
-      E.tela = E.tela || (ehTime() ? "pedidos" : "leads");
+      E.tela = E.tela || (ehTime() ? "hoje" : "leads");
+      if (!ehAdmin() && E.f.cadastro === "pendente") E.f.cadastro = "aprovado";
+      // O time vê leads de todas as unidades: a Lista é mais leve que o Quadro para centenas de leads.
+      if (ehTime() && !E.vistaEscolhida) E.vista = "lista";
       await carregar();
       desenhar();
       ligarTempoReal();
@@ -305,6 +388,7 @@
       E.carteiras = await API.carteiras();
       const [pedidos, perfis, acessos, unidades] = await Promise.all([ehAdmin() ? API.pedidos() : API.pedidos(null, regioesVisiveis()), API.perfis(), API.acessos(), API.unidades()]);
       Object.assign(E, { pedidos, perfis, acessos, unidades });
+      if (ehAdmin() && !E.siglasSincronizadas) { E.siglasSincronizadas = true; API.sincronizarSiglas(unidades.map(u => ({ ...u }))); } // cópia: a cidade é padronizada logo abaixo só para a tela
     } else {
       // Representante: relê o próprio cadastro (unidade liberada aparece na hora, sem recarregar a página).
       const p = await API.meuPerfil();
@@ -319,10 +403,25 @@
       }));
       E.equipe = equipe;
     }
-    if (!ehTime()) E.carteiras = await API.carteiras();
+    if (!ehTime()) {
+      E.carteiras = await API.carteiras();
+      if (!E.segmentosRegiao) E.segmentosRegiao = await API.segmentosRegiao();
+      // Coordenador e gerente: carteiras de quem responde a ele (só consulta).
+      if (ehExec()) {
+        try {
+          E.equipeComercial = (await API.equipeComercial()).filter(u => u.sigla !== (E.perfil.siglaPrincipal || ""));
+          E.pedidosEquipe = E.equipeComercial.length ? await API.pedidos(E.equipeComercial.map(u => u.sigla)) : [];
+        } catch (e) { E.equipeComercial = []; E.pedidosEquipe = []; E.erroEquipe = API.traduzir(e); }
+        E.leadsEquipe = API.leadsDe(E.pedidosEquipe);
+      }
+    }
     // Cidades gravadas antes da padronização aparecem certas na tela ("oSASCO/sP" -> "Osasco/SP").
     [E.pedidos, E.unidades, (E.perfil && E.perfil.unidades) || []].forEach(lista => (lista || []).forEach(x => { if (x && x.cidade_uf) x.cidade_uf = cidadeUf(x.cidade_uf); }));
     E.leads = API.leadsDe(E.pedidos);
+    if (ehAdmin() && !E.segmentosPublicados) {
+      E.segmentosPublicados = true;
+      API.segmentosRegiao().then(d => { E.segmentosRegiao = d; publicarSegmentos(); });
+    }
   }
   async function recarregar() { await carregar(); desenhar(); ligarTempoReal(); }
 
@@ -377,29 +476,121 @@
         </section>`;
 
   // Esqueci minha senha: o e-mail de redefinição não chega na caixa da Azul, então o caminho principal é pedir ao time pelo WhatsApp.
+  // A mensagem vai para quem do time cuida da região da pessoa (carteiras do time, com o substituto das férias).
   // O time refaz o acesso e manda um link para a pessoa criar a senha nova (veja janelaSenha).
-  const linkTime = (texto) => { const n = fone(cfg.whatsappTime || ""); return `https://wa.me/${n}?text=${encodeURIComponent(texto)}`; };
   const msgEsqueci = (email) => `Olá! Esqueci minha senha do ${cfg.nomeDoPortal || "Portal de Leads"}. Meu e-mail de acesso é ${email || "(meu e-mail)"}. Pode refazer meu acesso, por favor?`;
+  // Quem do time atende uma região. Região sem responsável fixo: vai para o primeiro responsável das outras regiões.
+  function contatoDoTime(regiao) {
+    const r = regiao ? responsavelRegiao(regiao) : null;
+    if (r && fone(r.celular)) return { ...r, regiao, daRegiao: true };
+    const outra = L.regioes.map(x => responsavelRegiao(x)).find(x => x && fone(x.celular));
+    if (outra) return { ...outra, regiao, daRegiao: false };
+    return cfg.whatsappTime ? { nome: "time de " + TIME, celular: cfg.whatsappTime, regiao, daRegiao: false } : null;
+  }
+  // ---- Cidades: autocompletar com a lista oficial de municípios (IBGE) ----
+  // A lista (js/municipios.js, ~75 KB) só é baixada quando alguém começa a digitar uma cidade.
+  let municipiosPromessa = null, MUN = null;
+  function carregarMunicipios() {
+    if (window.MUNICIPIOS) return Promise.resolve();
+    if (!municipiosPromessa) municipiosPromessa = new Promise((ok, erro) => {
+      const sc = document.createElement("script");
+      sc.src = "js/municipios.js?v=" + encodeURIComponent(VERSAO || "1");
+      sc.onload = ok; sc.onerror = () => { municipiosPromessa = null; erro(new Error("lista de cidades")); };
+      document.head.append(sc);
+    });
+    return municipiosPromessa;
+  }
+  function listaMunicipios() {
+    if (!MUN && window.MUNICIPIOS) {
+      MUN = [];
+      Object.entries(window.MUNICIPIOS).forEach(([uf, nomes]) => nomes.split("|").forEach(n => MUN.push({ t: `${n}/${uf}`, n, k: norm(n), uf })));
+    }
+    return MUN || [];
+  }
+  const regiaoDaCidade = (t) => { const uf = String(t || "").split("/")[1]; return (window.REGIAO_DA_UF || {})[uf] || ""; };
+  // Liga o autocompletar num campo de cidade. "regiao" (opcional): select de região preenchido pela UF, se estiver vazio.
+  function ligarCidade(input, regiao) {
+    if (!input || input.dataset.cidadeLigada) return;
+    input.dataset.cidadeLigada = "1";
+    input.setAttribute("autocomplete", "off");
+    const caixaPai = document.createElement("span"); caixaPai.className = "cidade-wrap";
+    input.parentNode.insertBefore(caixaPai, input); caixaPai.append(input);
+    const lista = document.createElement("div"); lista.className = "lista-cidades"; lista.hidden = true; lista.setAttribute("role", "listbox");
+    caixaPai.append(lista);
+    const fecharLista = () => { lista.hidden = true; lista.innerHTML = ""; };
+    const escolher = (t) => {
+      input.value = t; fecharLista();
+      if (regiao && (!regiao.value || regiao.dataset.auto)) { const r = regiaoDaCidade(t); if (r && L.regioes.includes(r)) { regiao.value = r; regiao.dataset.auto = "1"; } }
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    const filtrar = async () => {
+      const q = input.value.trim();
+      if (q.length < 2) return fecharLista();
+      try { await carregarMunicipios(); } catch (e) { return; } // sem a lista, o campo continua aceitando texto livre
+      if (input.value.trim() !== q) return;
+      const [nomeQ, ufQ] = q.split("/");
+      const k = norm(nomeQ), uf = String(ufQ || "").trim().toUpperCase();
+      const base = listaMunicipios().filter(m => !uf || m.uf.startsWith(uf));
+      const comeca = base.filter(m => m.k.startsWith(k)).sort((a, b) => a.k.length - b.k.length || a.k.localeCompare(b.k));
+      const contem = k.length >= 3 ? base.filter(m => !m.k.startsWith(k) && m.k.includes(k)).sort((a, b) => a.k.localeCompare(b.k)) : [];
+      const achados = comeca.concat(contem).slice(0, 8);
+      if (!achados.length || (achados.length === 1 && achados[0].t === q)) return fecharLista();
+      lista.innerHTML = achados.map((m, i) => `<button type="button" role="option" tabindex="-1" data-cid="${esc(m.t)}"${i === 0 ? ' class="ativo"' : ""}>${esc(m.n)}<small>/${m.uf}</small></button>`).join("");
+      lista.hidden = false;
+      lista.querySelectorAll("[data-cid]").forEach(b => b.addEventListener("mousedown", (e) => { e.preventDefault(); escolher(b.dataset.cid); }));
+    };
+    input.addEventListener("input", filtrar);
+    input.addEventListener("focus", () => { carregarMunicipios().catch(() => {}); });
+    input.addEventListener("keydown", (e) => {
+      if (lista.hidden) return;
+      const bs = [...lista.querySelectorAll("[data-cid]")]; let i = bs.findIndex(b => b.classList.contains("ativo"));
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault(); if (bs[i]) bs[i].classList.remove("ativo");
+        i = (i + (e.key === "ArrowDown" ? 1 : -1) + bs.length) % bs.length; bs[i].classList.add("ativo"); bs[i].scrollIntoView({ block: "nearest" });
+      } else if (e.key === "Enter") { e.preventDefault(); if (bs[i]) escolher(bs[i].dataset.cid); }
+      else if (e.key === "Escape") { e.preventDefault(); fecharLista(); }
+    });
+    input.addEventListener("blur", () => setTimeout(fecharLista, 150));
+    if (regiao) regiao.addEventListener("change", () => { delete regiao.dataset.auto; });
+  }
+
   function janelaEsqueci(emailDigitado) {
     abrir(`
       <div class="janela-topo"><div><h2>Esqueceu a senha?</h2><p>Sem problema. O time de ${esc(TIME)} resolve pelo WhatsApp.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
         <ol class="passos-senha">
-          <li><span class="n">1</span><span>Confira o seu e-mail de acesso e clique em <b>Pedir pelo WhatsApp</b>. A mensagem já vai pronta.</span></li>
-          <li><span class="n">2</span><span>O time refaz o seu acesso e manda um <b>link</b> de volta.</span></li>
+          <li><span class="n">1</span><span>Confira o seu e-mail, escolha a sua região e clique em <b>Pedir pelo WhatsApp</b>. A mensagem já vai pronta.</span></li>
+          <li><span class="n">2</span><span>Quem do time cuida da sua região refaz o seu acesso e manda um <b>link</b> de volta.</span></li>
           <li><span class="n">3</span><span>Abra o link, crie a senha nova e pronto: você entra direto, com seus leads e pedidos.</span></li>
         </ol>
         <div class="campo"><label for="es-email">E-mail de acesso</label><input id="es-email" type="email" autocomplete="email" placeholder="sigla.nome@voeazul.com.br" value="${esc(emailDigitado || "")}"></div>
+        <div class="campo"><label for="es-regiao">Sua região</label><select id="es-regiao">${opcoes(L.regioes, "", "Escolha a região")}</select>
+          <span class="dica" id="es-quem">Carregando quem atende cada região…</span></div>
         <div class="erro-form" id="es-erro" hidden></div>
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><a class="btn btn-zap" id="es-zap" href="#" target="_blank" rel="noopener">Pedir pelo WhatsApp</a></div>`,
-    (j) => {
-      const campo = j.querySelector("#es-email"), zapBt = j.querySelector("#es-zap"), erroEl = j.querySelector("#es-erro");
-      const atualizar = () => { zapBt.href = linkTime(msgEsqueci(campo.value.trim().toLowerCase())); erroEl.hidden = true; };
-      campo.addEventListener("input", atualizar); atualizar();
+    async (j) => {
+      const campo = j.querySelector("#es-email"), reg = j.querySelector("#es-regiao"), zapBt = j.querySelector("#es-zap"), erroEl = j.querySelector("#es-erro"), quem = j.querySelector("#es-quem");
+      let carregou = false;
+      const atualizar = () => {
+        erroEl.hidden = true;
+        if (!carregou) return;
+        const c = contatoDoTime(reg.value);
+        if (!c) { quem.textContent = "Não encontramos o contato do time. Fale com quem te passou o link do portal."; zapBt.href = "#"; return; }
+        quem.textContent = !reg.value ? "Escolha a região para ver quem vai te atender."
+          : c.daRegiao ? `A mensagem vai para ${primeiroNome(c.nome)}, que cuida da região ${reg.value}${c.substituindo ? ` (cobrindo ${primeiroNome(c.substituindo)})` : ""}.`
+          : `A região ${reg.value} está sem responsável fixo. A mensagem vai para ${primeiroNome(c.nome)}, do time de ${TIME}.`;
+        zapBt.href = zap(c.celular, msgEsqueci(campo.value.trim().toLowerCase()));
+      };
+      campo.addEventListener("input", atualizar); reg.addEventListener("change", atualizar);
       zapBt.addEventListener("click", (ev) => {
-        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(campo.value.trim())) { ev.preventDefault(); erroEl.textContent = "Digite o e-mail que você usa para entrar no portal."; erroEl.hidden = false; campo.focus(); }
+        const falha = (m, el) => { ev.preventDefault(); erroEl.textContent = m; erroEl.hidden = false; el.focus(); };
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(campo.value.trim())) return falha("Digite o e-mail que você usa para entrar no portal.", campo);
+        if (!reg.value) return falha("Escolha a sua região.", reg);
+        if (!contatoDoTime(reg.value)) return falha("Não encontramos o contato do time. Fale com quem te passou o link do portal.", reg);
       });
+      try { E.carteiras = await API.carteiras(); } catch (e) { E.carteiras = { regioes: {} }; }
+      carregou = true; atualizar();
     });
   }
 
@@ -422,8 +613,9 @@
       <h2>Criar meu acesso</h2>
       <p class="sub">Preencha uma vez. Depois o time de ${esc(TIME)} confere seus dados e libera o acesso.</p>
       <form id="f-cadastro" novalidate>
-        <div class="campo"><label>Eu sou</label><div class="escolha" role="radiogroup">
-          ${CARGOS.map((c, i) => `<label><input type="radio" name="c-cargo" value="${esc(c)}"${i === 0 ? " checked" : ""}> ${esc(c === "Inside Sales" ? "Time de " + TIME : c === "Executivo" ? "Executivo, coordenador ou gerente" : c)}</label>`).join("")}</div></div>
+        <div class="campo"><label id="c-eusou">Eu sou</label><div class="escolha" role="radiogroup" aria-labelledby="c-eusou">
+          ${CARGOS.map((c, i) => `<label${i === 0 ? "" : ' class="c-outro" hidden'}><input type="radio" name="c-cargo" value="${esc(c)}"${i === 0 ? " checked" : ""}> ${esc(c === "Inside Sales" ? "Time de " + TIME : c === "Executivo" ? "Executivo, coordenador ou gerente" : "Representante de unidade")}</label>`).join("")}</div>
+          <button type="button" class="link-btn link-pequeno" id="c-mais">Não sou representante: sou do time ou executivo</button></div>
         <div class="campo"><label for="c-nome">Nome completo</label><input id="c-nome" type="text" autocomplete="name" required></div>
         <div class="campo"><label for="c-email">E-mail Azul</label><input id="c-email" type="email" autocomplete="email" required placeholder="qoc04.fernanda@${esc(dominios[0])}">
           <span class="dica so-rep">O e-mail precisa começar com a sigla da unidade. Ex.: <b>qoc04</b>.fernanda@${esc(dominios[0])} para a unidade QOC04. Aceitos: ${esc(dominios.map(d => "@" + d).join(" ou "))}.</span>
@@ -436,11 +628,9 @@
           <div class="campo"><label for="c-cidade"><span class="so-rep">Cidade/UF da unidade</span><span class="so-exec" hidden>Cidade/UF onde você atua</span></label><input id="c-cidade" type="text" required placeholder="Campinas/SP"></div>
           <div class="campo"><label for="c-regiao">Região</label><select id="c-regiao" required>${opcoes(L.regioes, "", "Escolha")}</select></div>
         </div>
+        <p class="dica dica-solta so-exec" hidden>A região define quem do time de ${esc(TIME)} cuida dos seus pedidos de leads.</p>
         ${refazer ? "" : `<div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>`}
-        <div class="grade-2"${refazer ? " hidden" : ""}>
-          <div class="campo"><label for="c-senha">Senha</label><input id="c-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres</span></div>
-          <div class="campo"><label for="c-senha2">Repita a senha</label><input id="c-senha2" type="password" autocomplete="new-password" required></div>
-        </div>
+        <div class="campo"${refazer ? " hidden" : ""}><label for="c-senha">Crie uma senha</label><input id="c-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres. Use “Mostrar” para conferir o que digitou.</span></div>
         <div class="erro-form" id="c-erro" hidden></div>
         <button class="btn btn-primario btn-largo" type="submit">Criar acesso</button>
       </form>
@@ -489,8 +679,34 @@
         email.placeholder = c === "Representante" ? "qoc04.fernanda@" + dominios[0] : "nome.sobrenome@" + dominios[0];
       };
       fc.querySelectorAll("[name=c-cargo]").forEach(r => r.addEventListener("change", ajustar));
-      email.addEventListener("input", () => { if (!sigla.dataset.mexeu) sigla.value = API.siglaDoEmail(email.value).slice(0, 10); });
-      sigla.addEventListener("input", () => { sigla.dataset.mexeu = "1"; });
+      document.getElementById("c-mais").addEventListener("click", (ev) => {
+        fc.querySelectorAll(".c-outro").forEach(el => el.hidden = false);
+        ev.currentTarget.hidden = true;
+        (fc.querySelector(".c-outro input") || {}).focus && fc.querySelector(".c-outro input").focus();
+      });
+      // Unidade que já existe no portal: cidade e região vêm preenchidas pela sigla.
+      const cidadeEl = document.getElementById("c-cidade"), regiaoEl = document.getElementById("c-regiao");
+      let tSigla = null, ultimaSigla = "";
+      const buscarSigla = () => {
+        clearTimeout(tSigla);
+        tSigla = setTimeout(async () => {
+          const sg = sigla.value.trim().toUpperCase();
+          if (sg.length < 3 || sg === ultimaSigla || cargo() !== "Representante") return;
+          ultimaSigla = sg;
+          const info = await API.infoSigla(sg);
+          if (!info || sigla.value.trim().toUpperCase() !== sg) return;
+          if (info.cidade_uf && (!cidadeEl.value.trim() || cidadeEl.dataset.auto)) { cidadeEl.value = cidadeUf(info.cidade_uf); cidadeEl.dataset.auto = "1"; }
+          if (info.regiao && L.regioes.includes(info.regiao) && (!regiaoEl.value || regiaoEl.dataset.auto)) { regiaoEl.value = info.regiao; regiaoEl.dataset.auto = "1"; }
+          let d = document.getElementById("c-sigla-dica");
+          if (!d) { d = document.createElement("span"); d.id = "c-sigla-dica"; d.className = "dica dica-ok"; sigla.parentNode.append(d); }
+          d.textContent = `Unidade ${sg} encontrada: preenchemos a cidade e a região. Confira.`;
+        }, 400);
+      };
+      email.addEventListener("input", () => { if (!sigla.dataset.mexeu) sigla.value = API.siglaDoEmail(email.value).slice(0, 10); buscarSigla(); });
+      sigla.addEventListener("input", () => { sigla.dataset.mexeu = "1"; buscarSigla(); });
+      cidadeEl.addEventListener("input", () => { delete cidadeEl.dataset.auto; });
+      ligarCidade(cidadeEl, regiaoEl);
+      regiaoEl.addEventListener("change", () => { delete regiaoEl.dataset.auto; });
       fc.addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const v = (id) => document.getElementById(id).value.trim();
@@ -506,7 +722,6 @@
         if (!/^[A-Z0-9]{2,10}$/.test(sg) && !ehDoTime && !ehExec) return mostrar("A sigla deve ter de 2 a 10 letras ou números.");
         if (fone(v("c-cel")).length < 12) return mostrar("Informe o celular com DDD.");
         if (!refazer && v("c-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
-        if (!refazer && v("c-senha") !== v("c-senha2")) return mostrar("As senhas não são iguais.");
         try {
           const r = await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(em, v("c-senha"), {
             nome: v("c-nome"), celular: v("c-cel"), sigla: sg, cidade_uf: cidadeUf(v("c-cidade")), regiao: v("c-regiao"), time: ehDoTime, cargo: cargo()
@@ -603,10 +818,7 @@
         <div class="campo"><label for="v-email">E-mail Azul</label><input id="v-email" type="email" value="${esc(c.email)}" readonly aria-readonly="true"><span class="dica">É o e-mail do convite e vira o seu login.</span></div>
         <div class="campo"><label for="v-cel">Celular com DDD</label><input id="v-cel" type="tel" autocomplete="tel" required value="${esc(foneBonito(c.celular || ""))}" placeholder="(11) 90000-0000"></div>
         <div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>
-        <div class="grade-2">
-          <div class="campo"><label for="v-senha">Senha</label><input id="v-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres</span></div>
-          <div class="campo"><label for="v-senha2">Repita a senha</label><input id="v-senha2" type="password" autocomplete="new-password" required></div>
-        </div>
+        <div class="campo"><label for="v-senha">Crie uma senha</label><input id="v-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres. Use “Mostrar” para conferir o que digitou.</span></div>
         <div class="erro-form" id="v-erro" hidden></div>
         <button class="btn btn-primario btn-largo" type="submit">${nova ? "Criar senha e entrar" : "Criar acesso e entrar"}</button>
       </form>
@@ -622,7 +834,6 @@
       if (v("v-nome").length < 2) return mostrar("Digite seu nome completo.");
       if (!cel) return mostrar("Informe o celular com DDD, por exemplo (11) 91234-5678.");
       if (v("v-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
-      if (v("v-senha") !== v("v-senha2")) return mostrar("As senhas não são iguais.");
       try {
         await ocupado(f.querySelector("button[type=submit]"), () => API.cadastrarComConvite(codigo, v("v-senha"), { nome: v("v-nome"), celular: cel }));
         tirarConviteDaUrl(); E.tela = null; if (nova) E.senhaNova = true; else E.boasVindas = c.sigla; iniciar();
@@ -649,7 +860,8 @@
           ? `Fale com o time de ${esc(TIME)} para revisar o seu cadastro.`
           : faltaAcesso ? `Seu cadastro foi aprovado, mas o time de ${esc(TIME)} ainda precisa liberar ${p.cargo === "Inside Sales" ? "o seu acesso de time" : "a sua unidade"}. Assim que liberar, clique em “Já fui aprovado”.`
           : dono ? `${esc(dono)}, dono da unidade ${esc(principal.sigla)}, ou o time de ${esc(TIME)} vai conferir seus dados e liberar o acesso. Assim que liberarem, o portal abre sozinho.`
-          : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Você recebe um aviso pelo WhatsApp quando estiver pronto.`}</p>
+          : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Assim que liberarem, o portal abre sozinho.`}</p>
+        <div id="espera-contato" class="espera-contato" hidden></div>
         <div class="acoes" style="justify-content:center">
           <button class="btn" id="b-atualizar">Já fui aprovado</button>
           <button class="btn" id="b-celular">Alterar meu celular</button>
@@ -664,6 +876,20 @@
     pararObservar = API.observar([], () => { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } iniciar(); });
     document.getElementById("b-celular").onclick = () => janelaCelular();
     document.getElementById("b-sair").onclick = sair;
+    // Botão para falar com quem do time cuida da região (ou do Sudeste, se a região estiver livre).
+    (async () => {
+      try { E.carteiras = await API.carteiras(); } catch (e) { return; }
+      const caixa = document.getElementById("espera-contato");
+      const c = contatoDoTime(principal.regiao || (p.unidades || [])[0] && p.unidades[0].regiao);
+      if (!caixa || !c) return;
+      const quemSou = `${primeiroNome(p.nome)}${principal.sigla && !principal.nome ? ", da unidade " + principal.sigla : ""}`;
+      const msg = recusado
+        ? `Olá, ${primeiroNome(c.nome)}! Aqui é ${quemSou}. Meu cadastro no ${cfg.nomeDoPortal || "Portal de Leads"} (${p.email}) não foi aprovado. Pode me ajudar?`
+        : `Olá, ${primeiroNome(c.nome)}! Aqui é ${quemSou}. Fiz meu cadastro no ${cfg.nomeDoPortal || "Portal de Leads"} com o e-mail ${p.email} e estou aguardando a liberação.`;
+      caixa.innerHTML = `<p class="sub">Dúvidas? Quem atende ${c.daRegiao ? "a sua região" : "o portal"} é <b>${esc(primeiroNome(c.nome))}</b>, do time de ${esc(TIME)}.</p>
+        <a class="btn btn-zap" href="${esc(zap(c.celular, msg))}" target="_blank" rel="noopener">Falar com ${esc(primeiroNome(c.nome))} no WhatsApp</a>`;
+      caixa.hidden = false;
+    })();
   }
 
   async function sair() { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } await API.sair(); E.perfil = null; E.tela = null; telaAcesso("entrar"); }
@@ -674,9 +900,22 @@
   // ---- Carteiras: quem cuida de cada região ----
   const listaE = (xs) => xs.length > 1 ? xs.slice(0, -1).join(", ") + " e " + xs[xs.length - 1] : (xs[0] || "");
   const timeAprovado = () => (E.perfis || []).filter(x => ["time", "admin"].includes(x.papel) && x.situacao === "aprovado");
+  // Substitutos nas férias: cada pessoa do time pode ter o seu, com a sua data ({ uid: { para, ate } }).
+  // Carteiras salvas antes guardavam um substituto só ({ de, para, ate }); ele continua valendo.
+  function substitutosDe(c) {
+    const m = { ...((c && c.substitutos) || {}) };
+    const v = c && c.substituto;
+    if (v && v.de && v.para && !m[v.de]) m[v.de] = { para: v.para, ate: v.ate || "" };
+    return m;
+  }
+  function substitutoAtivo(c, uid) {
+    const s = uid ? substitutosDe(c)[uid] : null;
+    return s && s.para && s.para.uid && (!s.ate || hojeISO() <= s.ate) ? s : null;
+  }
   function responsavelRegiao(regiao) {
-    const c = E.carteiras || {}, r = (c.regioes || {})[regiao] || null, sub = c.substituto;
-    if (r && sub && sub.de === r.uid && sub.para && (!sub.ate || hojeISO() <= sub.ate)) return { ...sub.para, substituindo: r.nome };
+    const c = E.carteiras || {}, r = (c.regioes || {})[regiao] || null;
+    const sub = r ? substitutoAtivo(c, r.uid) : null;
+    if (sub) return { ...sub.para, substituindo: r.nome };
     return r;
   }
   // Dono do pedido: quem assumiu ou puxou; sem ninguém, o responsável da região. null = pedido livre.
@@ -693,11 +932,12 @@
   // as que está cobrindo como substituto (até a data) e as livres (sem responsável).
   function regioesVisiveis() {
     if (ehAdmin()) return L.regioes.slice();
-    const c = E.carteiras || {}, sub = c.substituto, eu = E.perfil.id;
+    const c = E.carteiras || {}, eu = E.perfil.id;
     return L.regioes.filter(r => {
       const x = (c.regioes || {})[r] || null;
       if (!x || x.uid === eu) return true;
-      return !!(sub && sub.de === x.uid && sub.para && sub.para.uid === eu && (!sub.ate || hojeISO() <= sub.ate));
+      const sub = substitutoAtivo(c, x.uid);
+      return !!(sub && sub.para.uid === eu);
     });
   }
   const euComoResponsavel = () => ({ responsavel: E.perfil.nome, responsavel_uid: E.perfil.id, responsavel_cel: E.perfil.celular || null });
@@ -713,15 +953,19 @@
     const time = ehTime();
     const pendentes = ehAdmin() ? E.perfis.filter(p => p.situacao === "pendente").length + E.acessos.filter(a => a.situacao === "pendente" && !a.principal && perfilDe(a.uid).situacao === "aprovado").length : 0;
     const novos = E.pedidos.filter(p => p.situacao === "Nova" && (meuPedido(p) || pedidoLivre(p))).length;
+    // [tela, nome, contador, nome curto para o menu de baixo no celular]
     const itens = time
-      ? [["pedidos", "Pedidos", novos], ["leads", "Leads"], ...(ehAdmin() ? [["cadastros", "Cadastros", pendentes]] : []), ["painel", "Painel"], ["conta", "Minha conta"]]
-      : [["leads", "Meus leads", E.leads.filter(paraHoje).length], ["pedidos", "Meus pedidos"], ...(unidadesDono().length ? [["equipe", "Minha equipe", pendentesEquipe()]] : []), ["conta", "Minha conta"]];
+      ? [["hoje", "Hoje", tarefasHoje().total], ["pedidos", "Pedidos", novos], ["leads", "Leads"], ["cadastros", "Cadastros", pendentes, "Cadastros"], ["painel", "Painel"], ["conta", "Minha conta", 0, "Conta"]]
+      : [["leads", "Meus leads", E.leads.filter(l => paraHoje(l) && meuLead(l)).length, "Leads"], ["pedidos", "Meus pedidos", 0, "Pedidos"], ...(unidadesDono().length ? [["equipe", "Minha equipe", pendentesEquipe(), "Equipe"]] : []),
+         ...((E.equipeComercial || []).length ? [["gestao", "Minha equipe", 0, "Equipe"]] : []), ["conta", "Minha conta", 0, "Conta"]];
 
     const conteudo = {
       leads: time ? telaLeadsTime : telaLeadsRep,
       pedidos: time ? telaPedidosTime : telaPedidosRep,
-      cadastros: ehAdmin() ? telaCadastros : telaPedidosTime,
+      cadastros: time ? telaCadastros : telaLeadsRep,
+      hoje: time ? telaHojeTime : telaLeadsRep,
       equipe: time ? (() => "") : telaEquipe,
+      gestao: time ? (() => "") : telaGestao,
       painel: telaPainel,
       conta: telaConta
     }[E.tela] || (() => "");
@@ -732,19 +976,45 @@
         <aside class="lateral">
           <div class="marca">${logo("logo logo-menu")}<span>${esc(cfg.nomeDoPortal || "Portal de Leads")}<small>${cfg.logoUrl ? esc(TIME) : `${esc(TIME)} | ${esc(EMPRESA)}`}</small></span></div>
           <nav class="nav" aria-label="Menu">
-            ${itens.map(([id, nome, c]) => `<button data-tela="${id}"${E.tela === id ? ' aria-current="page"' : ""}><span>${nome}</span>${c ? `<span class="contador">${c}</span>` : ""}</button>`).join("")}
+            ${itens.map(([id, nome, c, curto]) => `<button data-tela="${id}"${E.tela === id ? ' aria-current="page"' : ""}><span class="nav-icone" aria-hidden="true">${ICONES_NAV[id] || ""}</span><span class="nav-longo">${nome}</span><span class="nav-curto" aria-hidden="true">${curto || nome}</span>${c ? `<span class="contador">${c}</span>` : ""}</button>`).join("")}
           </nav>
           <div class="quem">
-            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? (ehAdmin() ? "Administrador · " : "Time de ") + esc(TIME) : `${E.perfil.cargo === "Executivo" ? "Executivo · " : unidadesDono().length ? "Dono · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
+            <div><div class="nome">${esc(E.perfil.nome)}</div><div class="papel">${time ? (ehAdmin() ? "Administrador · " : "Time de ") + esc(TIME) : `${E.perfil.cargo === "Executivo" ? nivelDe(E.perfil) + " · " : unidadesDono().length ? "Dono · " : ""}${n > 1 ? `${n} unidades` : esc(unidade() ? rotuloLongo(unidade().sigla) : "")}`}</div></div>
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
         <main class="principal" id="principal">${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}${AUTORIA}</p></main>
       </div>`;
 
-    $app.querySelectorAll("[data-tela]").forEach(b => b.addEventListener("click", () => { E.tela = b.dataset.tela; E.f.busca = ""; desenhar(); window.scrollTo(0, 0); }));
+    $app.querySelectorAll("[data-tela]").forEach(b => b.addEventListener("click", () => { E.tela = b.dataset.tela; E.f.busca = ""; E.f.faltam = false; desenhar(); window.scrollTo(0, 0); }));
     document.getElementById("b-sair").onclick = sair;
     ligarTela();
+    rotularTabelas();
+  }
+
+  // Ícones do menu (traço simples, herdam a cor do texto).
+  const icNav = (d) => `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+  const ICONES_NAV = {
+    hoje: icNav('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    leads: icNav('<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 13h10M7 17h6"/>'),
+    pedidos: icNav('<path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M4 7l8 4 8-4M12 11v10"/>'),
+    gestao: icNav('<circle cx="12" cy="5" r="2.5"/><circle cx="5" cy="19" r="2.5"/><circle cx="19" cy="19" r="2.5"/><path d="M12 7.5v4M5 16.5v-2.5h14v2.5"/>'),
+    equipe: icNav('<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5"/><circle cx="17" cy="9" r="2.5"/><path d="M16 15c3 0 5 2 5 4"/>'),
+    cadastros: icNav('<circle cx="10" cy="8" r="4"/><path d="M3 21c0-4 3-6 7-6s7 2 7 6"/><path d="M18 8h4M20 6v4"/>'),
+    painel: icNav('<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>'),
+    conta: icNav('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>')
+  };
+
+  // No celular, cada linha de tabela vira um cartão: cada célula ganha o nome da coluna.
+  function rotularTabelas() { rotularTabelasEm(document.getElementById("principal")); }
+  function rotularTabelasEm(raiz) {
+    if (!raiz) return;
+    raiz.querySelectorAll("table").forEach(t => {
+      const nomes = [...t.querySelectorAll("thead th")].map(th => th.textContent.trim());
+      if (!nomes.length) return;
+      t.classList.add("tabela-cartoes");
+      t.querySelectorAll("tbody tr").forEach(tr => [...tr.children].forEach((td, i) => { if (nomes[i] && !td.dataset.rotulo) td.dataset.rotulo = nomes[i]; }));
+    });
   }
 
   // Liga eventos comuns da área principal.
@@ -759,8 +1029,8 @@
       });
     });
     m.querySelectorAll("[data-pilula]").forEach(b => b.addEventListener("click", () => { E.f[b.dataset.pilula] = b.dataset.valor; desenhar(); }));
-    m.querySelectorAll("[data-vista]").forEach(b => b.addEventListener("click", () => { E.vista = b.dataset.vista; desenhar(); }));
-    m.querySelectorAll("[data-unidade]").forEach(b => b.addEventListener("click", () => { escolherUnidade(b.dataset.unidade); desenhar(); }));
+    m.querySelectorAll("[data-vista]").forEach(b => b.addEventListener("click", () => { E.vista = b.dataset.vista; E.vistaEscolhida = true; desenhar(); }));
+    m.querySelectorAll("[data-unidade]").forEach(b => b.addEventListener("click", () => { escolherUnidade(b.dataset.unidade); E.f.faltam = false; desenhar(); }));
     m.querySelectorAll("[data-lead]").forEach(el => el.addEventListener("click", (ev) => {
       if (ev.target.closest("select, a, button.nao-abre")) return;
       janelaLead(el.dataset.lead);
@@ -780,6 +1050,8 @@
         .map(([t, d]) => `<button class="btn btn-p nao-abre" data-adiar-para="${d}" data-id="${esc(b.dataset.id)}">${t}</button>`).join("")}`;
       caixa.querySelectorAll("[data-adiar-para]").forEach(x => x.addEventListener("click", () => adiar(x.dataset.id, x.dataset.adiarPara)));
     }));
+    m.querySelectorAll("a[data-marcar]").forEach(a => a.addEventListener("click", () => marcarAviso(a.dataset.pid, a.dataset.marcar)));
+    m.querySelectorAll("[data-hoje-quem]").forEach(b => b.addEventListener("click", () => { E.hojeQuem = b.dataset.hojeQuem; desenhar(); }));
     m.querySelectorAll("select[data-status-rapido]").forEach(sel => sel.addEventListener("change", () => salvarStatus(sel.dataset.statusRapido, sel.value)));
     m.querySelectorAll("[data-pedido]").forEach(el => el.addEventListener("click", () => ehTime() ? janelaPedidoTime(el.dataset.pedido) : null));
     m.querySelectorAll("[data-acao]").forEach(b => b.addEventListener("click", (ev) => { ev.stopPropagation(); acoes[b.dataset.acao](b); }));
@@ -791,6 +1063,27 @@
   }
 
   const acoes = {
+    instalar: async () => {
+      if (!instalarPrompt) return;
+      instalarPrompt.prompt();
+      try { const r = await instalarPrompt.userChoice; if (r && r.outcome === "accepted") aviso("Pronto! O portal está na tela do seu celular."); } catch (e) { /* ignora */ }
+      instalarPrompt = null; desenhar();
+    },
+    importarDe: (b) => janelaImportar(b.dataset.id),
+    cobrarSequencia: () => cobrarSequencia(tarefasHoje().cobrar, 0),
+    irCadastros: () => { E.tela = "cadastros"; E.f.cadastro = "pendente"; desenhar(); window.scrollTo(0, 0); },
+    gerenciar: (b) => janelaGerenciar(b.dataset.id),
+    verCarteira: (b) => janelaCarteiraEquipe(b.dataset.sigla),
+    quemPede: async (b) => {
+      const sigla = b.dataset.sigla, so = b.dataset.valor === "dono";
+      const u = minhasUnidades().find(x => x.sigla === sigla) || {};
+      const antes = !!u.so_dono_pede;
+      if (antes === so) return;
+      try {
+        await API.definirQuemPede(sigla, so); await carregar(); desenhar();
+        aviso(so ? `Na ${sigla}, só você pede bases agora.` : `Na ${sigla}, todos da equipe podem pedir bases.`, false, async () => { await API.definirQuemPede(sigla, antes); await carregar(); desenhar(); aviso("Desfeito."); });
+      } catch (e) { aviso(API.traduzir(e), true); }
+    },
     puxar: (b) => { const p = E.pedidos.find(x => x.id === b.dataset.id);
       seConfirmar({ titulo: `Puxar o pedido ${p.id} para você?`, texto: `${esc(p.cidade_uf || "")} · ${esc(p.regiao || "")}. Você passa a ser o responsável e o representante vê o seu nome.`, botao: "Puxar para mim" },
         () => API.atualizarPedido(p.id, euComoResponsavel()), `Pedido ${p.id} é seu agora.`); },
@@ -799,6 +1092,9 @@
     atualizar: async (b) => { await ocupado(b, recarregar); aviso("Dados atualizados."); },
     exportar: () => exportarLeads(),
     irPedidos: () => { E.tela = "pedidos"; desenhar(); },
+    // Atalho do aviso de base travada: mostra só os leads que ainda estão em Novo ou Prospecção.
+    verFaltam: () => { Object.assign(E.f, { faltam: true, base: "atual", status: "", busca: "" }); desenhar(); const a = document.getElementById("aviso-faltam"); if (a) a.scrollIntoView({ block: "start", behavior: "smooth" }); },
+    verTodos: () => { E.f.faltam = false; desenhar(); },
     irLeads: () => { E.tela = "leads"; desenhar(); },
     aprovar: (b) => seConfirmar({ titulo: `Aprovar ${perfilDe(b.dataset.id).nome || "este cadastro"}${b.dataset.papel === "admin" ? " como administrador" : b.dataset.papel === "time" ? " como time" : ""}?`,
         texto: b.dataset.papel === "admin" ? "A pessoa passa a ver tudo e a aprovar cadastros, mudar acessos e excluir." : b.dataset.papel === "time" ? "A pessoa passa a ver e trabalhar todos os pedidos e leads."
@@ -874,6 +1170,7 @@
   function filtrarLeads(lista) {
     const b = norm(E.f.busca);
     return lista.filter(l => {
+      if (!ehTime() && E.f.faltam && !trava(l)) return false;
       if (E.f.status && l.status !== E.f.status) return false;
       if (ehTime()) {
         if (E.f.loja && l.sigla !== E.f.loja) return false;
@@ -918,6 +1215,7 @@
       else t += `<span class="etiqueta info-leve">Retornar ${dataCurta(l.retorno)}${l.retorno_hora ? ", " + esc(l.retorno_hora) : ""}</span>`;
     }
     if (l.status === "Sem interesse" && l.tentar_em) t += `<span class="etiqueta ${tentarDevido(l) ? "info" : "info-leve"}">Tentar de novo ${tentarDevido(l) ? "hoje" : "em " + dataCurta(l.tentar_em)}</span>`;
+    if (l.cuida_nome && (ehTime() || l.cuida_uid !== E.perfil.id)) t += `<span class="etiqueta">Com ${esc(l.cuida_nome)}</span>`;
     return t;
   }
   function etiquetaTentativas(l) {
@@ -941,7 +1239,7 @@
   function tabelaLeads(lista) {
     if (!lista.length) return `<div class="vazio"><h2>Nenhum lead encontrado</h2><p>Mude os filtros para ver outros leads.</p></div>`;
     return `<div class="tabela-wrap"><table class="lista-leads">
-      <thead><tr><th>Empresa</th>${ehTime() ? "<th>Unidade</th>" : ""}<th>Contato</th><th>Cidade</th><th>Status</th><th>Último contato</th><th>Contato válido?</th></tr></thead>
+      <thead><tr><th>Empresa</th>${ehTime() ? "<th>Unidade</th>" : ""}<th>Contato</th><th>Cidade</th><th>Status</th><th>Último contato</th><th>Algum contato funciona?</th></tr></thead>
       <tbody>${lista.map(l => `
         <tr class="clicavel" data-lead="${esc(l.id)}">
           <td><b>${esc(l.empresa)}</b><div class="sec">${esc(l.cnpj)}</div></td>
@@ -952,13 +1250,13 @@
             ${parado(l) ? `<div class="sec" style="color:var(--danger)">Parado há ${dias(l.atualizado_em)} dias</div>` : ""}
             ${etiquetasAgenda(l) ? `<div class="sec etiquetas-lista">${etiquetasAgenda(l)}</div>` : ""}</td>
           <td data-rotulo="Último contato">${data(l.data_contato)}${tentativasDe(l) ? `<div class="sec">${tentativasDe(l)} tentativa${tentativasDe(l) > 1 ? "s" : ""}</div>` : ""}</td>
-          <td data-rotulo="Contato válido?">${esc(l.contato_valido || "–")}</td>
+          <td data-rotulo="Algum contato funciona?">${esc(l.contato_valido || "–")}</td>
         </tr>`).join("")}</tbody></table></div>`;
   }
 
   function seletorVista() {
     return `<div class="pilulas" role="group" aria-label="Forma de ver">
-      <button data-vista="kanban" aria-pressed="${E.vista === "kanban"}">Kanban</button>
+      <button data-vista="kanban" aria-pressed="${E.vista === "kanban"}">Quadro</button>
       <button data-vista="lista" aria-pressed="${E.vista === "lista"}">Lista</button></div>`;
   }
 
@@ -1005,10 +1303,12 @@
 
   async function adiar(id, quando) {
     const l = E.leads.find(x => x.id === id);
-    if (!(await confirmar({ titulo: `Adiar ${l.empresa}?`, texto: `O próximo contato passa para ${data(quando)}.`, botao: "Adiar" }))) return;
+    const peloTentar = tentarDevido(l) && !retornoDevido(l);
+    const antes = peloTentar ? { tentar_em: l.tentar_em || "" } : { retorno: l.retorno || "" };
     try {
-      await API.atualizarLead(id, tentarDevido(l) && !retornoDevido(l) ? { tentar_em: quando } : { retorno: quando });
-      await aposMudarLead(`${l.empresa}: próximo contato em ${data(quando)}.`);
+      await API.atualizarLead(id, peloTentar ? { tentar_em: quando } : { retorno: quando });
+      await carregar(); desenhar();
+      aviso(`${l.empresa}: próximo contato em ${data(quando)}.`, false, async () => { await API.atualizarLead(id, antes); await carregar(); desenhar(); aviso("Desfeito."); });
     } catch (e) { aviso(API.traduzir(e), true); }
   }
 
@@ -1032,6 +1332,8 @@
       return { titulo: "Antes vem a implantação", texto: `<b>${esc(l.empresa)}</b> está em <b>${esc(l.status)}</b>. O lead precisa passar por <b>Em implantação</b> antes de ir para Embarque iniciado.`, foco: "status" };
     if (ETAPAS_COM_CONTATO.includes(novo) && !marcas(l).ok.size)
       return { titulo: "Falta marcar o contato que funcionou", texto: `Para passar <b>${esc(l.empresa)}</b> para <b>${esc(novo)}</b>, marque com <b>✓</b> o telefone ou e-mail em que você conseguiu falar com a empresa. Assim o time sabe qual contato usar se o cliente fechar.`, foco: "contatos" };
+    if (novo === "Sem interesse" && !tentativasDe(l) && l.status !== "Sem interesse")
+      return { titulo: "Tente o contato antes", texto: `Para marcar <b>${esc(l.empresa)}</b> como Sem interesse, registre pelo menos uma tentativa: use o WhatsApp, a ligação ou o e-mail da ficha e confirme quando o portal perguntar. Depois do contato, o portal pergunta “Como foi?” e você escolhe “Não tem interesse”.`, foco: "contatos" };
     if (novo === "Contato inválido" && !tentativasDe(l) && l.contato_valido !== "Não")
       return { titulo: "Tente o contato antes", texto: `Para marcar <b>${esc(l.empresa)}</b> como Contato inválido, registre pelo menos uma tentativa: use o WhatsApp, a ligação ou o e-mail da ficha e confirme quando o portal perguntar. Se você já sabe que um número não existe, marque ele com <b>✕</b>.`, foco: "contatos" };
     return null;
@@ -1101,6 +1403,13 @@
 
   function preencher(modelo, l) {
     const u = E.perfil.unidades && E.perfil.unidades.find(x => x.sigla === l.sigla) || {};
+    // Carteira de executivo: a sigla é um código interno (EX…) e não vai para o cliente.
+    if (u.tipo === "executivo" || infoUnidade(l.sigla).tipo === "executivo") {
+      modelo = String(modelo || "")
+        .replace(/da Azul Logística \(unidade \{sigla\}, \{cidade\}\)/g, "da equipe comercial da Azul Logística em {cidade}")
+        .replace(/Azul Logística, unidade \{sigla\}/g, "Azul Logística")
+        .replace(/\s*\(?unidade \{sigla\}\)?/g, "");
+    }
     const contato = l.contato && !/fict/i.test(l.contato) ? ", " + primeiroNome(l.contato) : "";
     return modelo.replace(/\{contato\}/g, contato).replace(/\{empresa\}/g, l.empresa || "").replace(/\{nome\}/g, primeiroNome(E.perfil.nome))
       .replace(/\{sigla\}/g, l.sigla || "").replace(/\{cidade\}/g, u.cidade_uf || l.cidade_uf || "").replace(/\{celular\}/g, foneBonito(E.perfil.celular));
@@ -1159,7 +1468,7 @@
     const linhas = [
       ["CNPJ", l.cnpj && `${esc(l.cnpj)} <button type="button" class="link-mini" data-copiar="${esc(l.cnpj)}">Copiar</button>`],
       ["Segmento", l.segmento && esc(l.segmento)],
-      ["Atividade", cnaes.length && `CNAE ${esc(cnaeBonito(cnaes[0]))}${cnaes.length > 1 ? ` <span class="sub">+ ${cnaes.length - 1} outro${cnaes.length > 2 ? "s" : ""}</span>` : ""}`],
+      ["Atividade", ehTime() && cnaes.length && `CNAE ${esc(cnaeBonito(cnaes[0]))}${cnaes.length > 1 ? ` <span class="sub">+ ${cnaes.length - 1} outro${cnaes.length > 2 ? "s" : ""}</span>` : ""}`],
       ["Porte", porteTexto(l) && esc(porteTexto(l))],
       [l.endereco ? "Endereço" : "Cidade/UF", (endereco + esc(local)) || ""],
       ["Contato", l.contato && esc(l.contato)],
@@ -1171,6 +1480,32 @@
         ${links.length ? `<div class="ct-links">${links.map(([u, nome, txt]) => `<a href="${esc(linkDe(u))}" target="_blank" rel="noopener" class="ct-link">${esc(txt || nome)}</a>`).join("")}</div>` : ""}`,
       listas: `<div class="ct-listas"><p class="ct-dica">Depois de tentar, marque <b>✓</b> no contato que funcionou ou <b>✕</b> no que não funciona.</p>${secaoTelefones(tels, telTodos)}${emailsHtml}</div>`
     };
+  }
+
+  // "Como foi?" e "Quando volto?": depois de cada envio ou ligação, duas respostas preenchem status, ✓/✕ e próximo contato.
+  function painelComoFoi(cf, n) {
+    const opcoesComo = cf.canal === "ligacao"
+      ? [["interesse", "Tem interesse"], ["depois", "Pediu para falar depois"], ["sem", "Não tem interesse"], ["errado", "Não é a empresa ou número errado"]]
+      : [["interesse", "Respondeu: tem interesse"], ["aguardando", "Ainda não respondeu"], ["sem", "Respondeu: não tem interesse"], ["errado", cf.canal === "email" ? "E-mail voltou ou é de outra empresa" : "Número errado ou não é a empresa"]];
+    const chips = [["Amanhã", somaDias(1)], ["Em 3 dias", somaDias(3)], ["Próxima semana", proximaSegunda()]];
+    return `<div class="comofoi" id="l-comofoi" role="group" aria-label="Como foi o contato">
+      <p class="cf-registrado">✓ Tentativa ${n} registrada.</p>
+      <div class="cf-passo" data-passo="como"${cf.ok ? "" : " hidden"}>
+        <p class="cf-pergunta">Como foi?</p>
+        <div class="cf-opcoes">${opcoesComo.map(([v, t]) => `<button type="button" class="cf-op" data-como="${v}">${esc(t)}</button>`).join("")}</div>
+      </div>
+      <div class="cf-passo" data-passo="motivo" hidden>
+        <p class="cf-pergunta">Por que não tem interesse?</p>
+        <div class="cf-opcoes">${MOTIVOS.filter(Boolean).map(m => `<button type="button" class="cf-op" data-cf-motivo="${esc(m)}">${esc(m)}</button>`).join("")}</div>
+        <div class="cf-linha" id="cf-outro-c" hidden><input id="cf-outro" type="text" maxlength="200" placeholder="Escreva o motivo em poucas palavras" aria-label="Qual foi o motivo"><button type="button" class="btn btn-primario" id="cf-outro-ok">Salvar</button></div>
+      </div>
+      <div class="cf-passo" data-passo="quando"${cf.ok ? " hidden" : ""}>
+        <p class="cf-pergunta" id="cf-q-quando">${cf.ok ? "Quando você volta a falar com a empresa?" : "Não atendeu. Quando você tenta de novo?"}</p>
+        <div class="cf-opcoes">${chips.map(([t, d]) => `<button type="button" class="cf-op" data-cf-quando="${d}">${t}<small>${data(d)}</small></button>`).join("")}<button type="button" class="cf-op" data-cf-quando="outra">Outra data</button></div>
+        <div class="cf-linha" id="cf-data-c" hidden><input id="cf-data" type="date" min="${hojeISO()}" aria-label="Data do próximo contato"><button type="button" class="btn btn-primario" id="cf-data-ok">Salvar</button></div>
+      </div>
+      <button type="button" class="link-btn link-pequeno" id="cf-pular">Prefiro preencher a ficha</button>
+    </div>`;
   }
 
   function janelaLead(id, op) {
@@ -1198,13 +1533,17 @@
     const prazos = [["Não", ""], ["Em 1 mês", somaDias(30)], ["Em 3 meses", somaDias(90)], ["Em 6 meses", somaDias(180)]];
 
     abrir(`
-      <div class="janela-topo"><div><h2>${esc(l.empresa)}</h2><p>${l.fantasia && norm(l.fantasia) !== norm(l.empresa) ? `Nome fantasia: ${esc(l.fantasia)} · ` : ""}${esc(rotuloLongo(l.sigla))}${p.id ? `, pedido ${esc(p.id)} de ${data(p.criada_em)}` : ""}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-topo"><div><h2>${esc(l.empresa)}</h2><p>${l.fantasia && norm(l.fantasia) !== norm(l.empresa) ? `Nome fantasia: ${esc(l.fantasia)} · ` : ""}${esc(rotuloLongo(l.sigla))}${p.id ? (ehTime() ? `, pedido ${esc(p.id)} de ${data(p.criada_em)}` : `, pedido de ${data(p.criada_em)}`) : ""}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
         ${completo ? ficha.dados : `<dl class="dados">
           ${[["CNPJ", l.cnpj], ["Segmento", l.segmento], ["Cidade/UF", l.cidade_uf], ["Contato", l.contato], ["Telefone", tel ? foneTxt(tel) : l.telefone], ["E-mail", email || l.email]]
             .filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}
         </dl>`}
-        ${op.aposTentativa ? `<div class="ok-tentativa">Tentativa ${n} registrada. Marque abaixo o próximo contato.</div>` : ""}
+        ${op.comoFoi ? painelComoFoi(op.comoFoi, n) : op.aposTentativa ? `<div class="ok-tentativa">Tentativa ${n} registrada. Marque abaixo o próximo contato.</div>` : ""}
+        ${op.salvoMsg ? `<div class="ok-tentativa" role="status">✓ ${esc(op.salvoMsg)}</div>` : ""}
+        ${temEquipe(l.sigla) ? `<div class="cuida-linha"><span>${l.cuida_uid ? (l.cuida_uid === E.perfil.id ? "<b>Você</b> está cuidando deste lead." : `<b>${esc(l.cuida_nome || "Outra pessoa")}</b> está cuidando deste lead.`) : "Ninguém da unidade está cuidando deste lead ainda."}</span>
+          <button type="button" class="btn btn-p" id="l-cuidar">${l.cuida_uid === E.perfil.id ? "Deixar de cuidar" : l.cuida_uid ? "Passar para mim" : "Vou cuidar deste"}</button></div>`
+          : ehTime() && l.cuida_nome ? `<p class="sub">Na unidade, quem cuida deste lead é ${esc(l.cuida_nome)}.</p>` : ""}
         ${decidir(l) ? `<div class="decidir" id="l-decidir">
             <div class="decidir-topo"><b>${n} tentativas e o lead continua em ${esc(l.status)}</b>${l.ultima_tentativa ? `<span>Última ${haDias(l.ultima_tentativa)}</span>` : ""}</div>
             <p>Vale decidir o que fazer com este lead para não travar a próxima base.</p>
@@ -1286,7 +1625,7 @@
           <div class="erro-form" id="l-erro" hidden></div>
         </form>
         <div class="hist"><h3>Histórico</h3><div id="l-hist"><p class="sub">Carregando…</p></div>
-          <div class="campo" style="margin-top:12px"><textarea id="l-obs" rows="2" placeholder="Adicionar observação…"></textarea></div>
+          <div class="campo" style="margin-top:12px"><textarea id="l-obs" data-lead="${esc(id)}" rows="2" placeholder="Adicionar observação…"></textarea></div>
           <button class="btn btn-p" id="l-add-obs">+ Adicionar observação</button>
         </div>
       </div>
@@ -1311,6 +1650,22 @@
       };
       mostrarBlocos(); textoTentar();
 
+      // O que está na ficha agora, para saber se a pessoa mudou algo e ainda não salvou.
+      const valor = (s) => (j.querySelector(s) || {}).value || "";
+      const estado = () => JSON.stringify([st.value, dt.value, agData.value, agHora.value, agLembrete.value, motivo, tentarEm,
+        valor("#l-outro"), valor("#q-volume"), valor("#q-destinos"), valor("#q-transp"), valor("#l-azul"), valor("#e-cnpj"), valor("#e-razao")]);
+      const inicial = estado();
+      let salvou = false;
+      // Próximo contato digitado e não salvo continua na ficha quando ela é redesenhada (depois de uma tentativa ou de um ✓/✕).
+      const agendaPendente = () => {
+        const a = [agData.value, agHora.value, agLembrete.value];
+        return a.join("|") !== [l.retorno || "", l.retorno_hora || "", l.lembrete || ""].join("|") ? a : undefined;
+      };
+      if (op.agenda) {
+        [agData.value, agHora.value, agLembrete.value] = op.agenda;
+        j.querySelectorAll("[data-quando]").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.quando === agData.value)));
+      }
+
       let statusAntes = st.value;
       const irPara = (foco) => {
         const alvo = foco === "contatos" ? (j.querySelector("#l-tels") || j.querySelector(".contatos")) : foco === "azul" ? blocoAzul : foco === "embarque" ? blocoEmbarque : st;
@@ -1330,9 +1685,17 @@
       if (op.obsPendente) obsCampo.value = op.obsPendente;
       guardaFechar = async () => {
         const t = obsCampo.value.trim();
-        if (!t) return true;
-        try { await API.registrar(id, "observacao", t); obsCampo.value = ""; aviso("Sua observação foi salva automaticamente."); return true; }
-        catch (e) { aviso(API.traduzir(e), true); return false; }
+        if (t) {
+          try { await API.registrar(id, "observacao", t); obsCampo.value = ""; aviso("Sua observação foi salva automaticamente."); }
+          catch (e) { aviso(API.traduzir(e), true); return false; }
+        }
+        // Mudou status, data, próximo contato ou outro campo e não salvou: pergunta antes de fechar.
+        if (salvou || estado() === inicial) return true;
+        const r = await escolher({ titulo: "Salvar antes de sair?", texto: `Você mudou <b>${esc(l.empresa)}</b> e ainda não salvou. Se sair agora, a mudança se perde.`,
+          opcoes: [{ id: "continuar", rotulo: "Continuar aqui" }, { id: "sair", rotulo: "Sair sem salvar", tipo: "perigo" }, { id: "salvar", rotulo: "Salvar", tipo: "primario" }] });
+        if (r === "sair") return true;
+        if (r === "salvar") j.querySelector("#l-salvar").click();
+        return false;
       };
       st.addEventListener("change", async () => {
         const r = regraStatus(l, st.value);
@@ -1403,9 +1766,16 @@
       j.querySelector("#l-add-obs").addEventListener("click", async (ev) => {
         const t = j.querySelector("#l-obs").value.trim(), bt = ev.currentTarget;
         if (!t) return;
-        if (!(await confirmar({ titulo: "Adicionar esta observação?", texto: "Ela fica no histórico do lead. Dá para editar ou excluir só hoje.", botao: "Adicionar" }))) return;
-        try { await ocupado(bt, () => API.registrar(id, "observacao", t)); j.querySelector("#l-obs").value = ""; carregarHist(); }
-        catch (e) { aviso(API.traduzir(e), true); }
+        try {
+          await ocupado(bt, () => API.registrar(id, "observacao", t)); j.querySelector("#l-obs").value = ""; carregarHist();
+          aviso("Observação adicionada.", false, async () => {
+            const hs = await API.historico(id);
+            const h = hs.filter(x => x.tipo === "observacao" && x.autor === E.perfil.id && x.texto === t).pop();
+            if (h) await API.excluirObservacao(id, h.id);
+            if ($janela.open && $janela.querySelector(`#l-obs[data-lead="${id}"]`)) carregarHist();
+            aviso("Observação retirada.");
+          });
+        } catch (e) { aviso(API.traduzir(e), true); }
       });
 
       // Pergunta "Você enviou?" quando a pessoa volta para o portal. Cada envio ou ligação conta uma tentativa.
@@ -1434,9 +1804,20 @@
             // O contato de hoje foi feito: tira o lembrete vencido.
             if (retornoDevido(l)) Object.assign(dados, { retorno: "", retorno_hora: "", lembrete: "" });
             if (tentarDevido(l)) dados.tentar_em = "";
+            // Ligação atendida: o número usado fica marcado como "Funciona" (vale para a unidade toda e vai para o histórico).
+            if (canal === "ligacao" && ok && tel) {
+              const m = marcas(l);
+              m.nao.delete(tel); m.ok.add(tel);
+              Object.assign(dados, { contatos_ok: [...m.ok], contatos_nao: [...m.nao], contato_valido: contatoValidoDe(l, m.ok, m.nao) });
+              if ((l.tel_errados || []).length) dados.tel_errados = [];
+            }
+            // Quem faz a primeira tentativa passa a cuidar do lead (dá para trocar na ficha).
+            if (!ehTime() && !l.cuida_uid) Object.assign(dados, cuidaEu());
+            const agenda = agendaPendente();
+            const contato = canal === "email" ? email : tel;
             await API.atualizarLead(id, dados, { canal, texto });
             await carregar(); desenhar();
-            janelaLead(id, { aposTentativa: true });
+            janelaLead(id, { aposTentativa: true, agenda, comoFoi: { canal, ok, contato } });
           } catch (e) { aviso(API.traduzir(e), true); }
         }));
       };
@@ -1448,7 +1829,18 @@
 
       const compor = j.querySelector("#l-compor");
       const acionar = (canal) => {
-        if (canal === "ligacao") { pendente = "ligacao"; location.href = tel.startsWith("0800") ? `tel:${tel}` : `tel:+55${tel}`; setTimeout(() => perguntar("ligacao"), 1500); return; }
+        if (canal === "ligacao") {
+          // No celular, disca. No computador, mostra o número para ligar de outro aparelho e só pergunta depois.
+          if (ehCelular()) { pendente = "ligacao"; location.href = tel.startsWith("0800") ? `tel:${tel}` : `tel:+55${tel}`; setTimeout(() => perguntar("ligacao"), 1500); return; }
+          compor.innerHTML = `<div class="ligar-pc"><span class="sub">Ligue do seu celular ou telefone para</span>
+              <b class="ligar-numero">${esc(foneTxt(tel))}</b>
+              <div class="acoes"><button class="btn btn-p" id="lg-copiar">Copiar número</button><button class="btn btn-p" id="lg-cancelar">Cancelar</button><button class="btn btn-p btn-primario" id="lg-liguei">Já liguei</button></div></div>`;
+          compor.querySelector("#lg-copiar").onclick = async () => aviso(await copiar(tel) ? "Número copiado." : "Não deu para copiar. Anote o número.", false);
+          compor.querySelector("#lg-cancelar").onclick = () => { compor.innerHTML = ""; };
+          compor.querySelector("#lg-liguei").onclick = () => { compor.innerHTML = ""; perguntar("ligacao"); };
+          compor.scrollIntoView({ block: "center", behavior: "smooth" });
+          return;
+        }
         const mods = modelosMensagem();
         let mod = mods.find(m => m.id === modeloPadrao(l, n)) || mods[0];
         const textoDe = (m) => preencher(canal === "email" ? m.email : m.whatsapp, l);
@@ -1498,12 +1890,9 @@
       // ✓ Funciona / ✕ Não funciona em cada telefone ou e-mail (clicar de novo tira a marcação).
       const marcarContato = async (c, tipo) => {
         const { ok, nao } = marcas(l);
+        const antes = { contatos_ok: [...ok], contatos_nao: [...nao], contato_valido: l.contato_valido || "" };
         const ehTel = /^\d+$/.test(c), nome = ehTel ? foneTxt(c) : c;
         const tirar = tipo === "ok" ? ok.has(c) : nao.has(c);
-        const pergunta = tirar ? { titulo: `Tirar a marcação de ${nome}?`, texto: "Ele volta para a lista sem resposta.", botao: "Tirar marcação" }
-          : tipo === "ok" ? { titulo: `${nome} funciona?`, texto: "Ele sobe para o topo da lista e fica registrado no histórico.", botao: "Funciona" }
-          : { titulo: `${nome} não funciona?`, texto: "Ele fica riscado para toda a unidade e registrado no histórico.", botao: "Não funciona", perigo: true };
-        if (!(await confirmar(pergunta))) return;
         ok.delete(c); nao.delete(c);
         if (!tirar) (tipo === "ok" ? ok : nao).add(c);
         const dados = { contatos_ok: [...ok], contatos_nao: [...nao], contato_valido: contatoValidoDe(l, ok, nao) };
@@ -1516,9 +1905,111 @@
             await API.atualizarLead(id, { status: "Contato inválido", data_contato: atual.data_contato || hojeISO(), retorno: "", retorno_hora: "", lembrete: "" });
             await aposMudarLead(`${atual.empresa}: Contato inválido.`);
           }
-          janelaLead(id, { telTodos: !!j.querySelector(".ct-grupo") });
+          janelaLead(id, { telTodos: !!j.querySelector(".ct-grupo"), agenda: agendaPendente() });
+          aviso(tirar ? `Marcação de ${nome} retirada.` : tipo === "ok" ? `${nome}: funciona.` : `${nome}: não funciona.`, false, async () => {
+            await API.atualizarLead(id, antes); await carregar(); desenhar();
+            if ($janela.open && $janela.querySelector(`#l-obs[data-lead="${id}"]`)) janelaLead(id);
+            aviso("Desfeito.");
+          });
         } catch (e) { aviso(API.traduzir(e), true); }
       };
+
+      // Quem cuida do lead: "Vou cuidar deste", "Passar para mim" e "Deixar de cuidar".
+      const btCuidar = j.querySelector("#l-cuidar");
+      if (btCuidar) btCuidar.addEventListener("click", async () => {
+        const antes = { cuida_uid: l.cuida_uid || "", cuida_nome: l.cuida_nome || "" };
+        const meu = l.cuida_uid === E.perfil.id;
+        if (!meu && l.cuida_uid && !(await confirmar({ titulo: `Passar ${l.empresa} para você?`, texto: `Hoje quem cuida é ${esc(l.cuida_nome || "outra pessoa")}. Combine com a pessoa antes, para ninguém abordar a empresa duas vezes.`, botao: "Passar para mim" }))) return;
+        try {
+          await API.atualizarLead(id, meu ? { cuida_uid: "", cuida_nome: "" } : cuidaEu());
+          await carregar(); desenhar(); janelaLead(id, { agenda: agendaPendente() });
+          aviso(meu ? "Você deixou de cuidar deste lead." : "Agora você cuida deste lead.", false, async () => { await API.atualizarLead(id, antes); await carregar(); desenhar(); if ($janela.open) janelaLead(id); aviso("Desfeito."); });
+        } catch (e) { aviso(API.traduzir(e), true); }
+      });
+
+      // "Como foi?" e "Quando volto?" (depois de uma tentativa): as respostas preenchem status, ✓/✕ e próximo contato, e já salvam.
+      const cfBox = j.querySelector("#l-comofoi");
+      if (cfBox && op.comoFoi) {
+        const cf = op.comoFoi;
+        const dec = { dados: {}, ok: null, nao: null };
+        const passo = (nome) => {
+          cfBox.querySelectorAll(".cf-passo").forEach(x => { x.hidden = x.dataset.passo !== nome; });
+          const f = cfBox.querySelector(`[data-passo="${nome}"] .cf-op`); if (f) f.focus();
+        };
+        const marcar = (contato, tipo) => {
+          const m = dec.ok ? { ok: dec.ok, nao: dec.nao } : marcas(l);
+          m.ok.delete(contato); m.nao.delete(contato); (tipo === "ok" ? m.ok : m.nao).add(contato);
+          dec.ok = m.ok; dec.nao = m.nao;
+        };
+        const gravar = async (extra, msg) => {
+          const dados = { ...dec.dados, ...extra };
+          if (dec.ok) {
+            Object.assign(dados, { contatos_ok: [...dec.ok], contatos_nao: [...dec.nao], contato_valido: contatoValidoDe(l, dec.ok, dec.nao) });
+            if ((l.tel_errados || []).length) dados.tel_errados = [];
+          }
+          if (!l.data_contato && !dados.data_contato) dados.data_contato = hojeISO();
+          if (!ehTime() && !l.cuida_uid) Object.assign(dados, cuidaEu());
+          cfBox.querySelectorAll("button, input").forEach(x => { x.disabled = true; });
+          try {
+            const antes = !ehTime() && podePedir();
+            await API.atualizarLead(id, dados);
+            salvou = true;
+            await carregar(); desenhar();
+            janelaLead(id, { salvoMsg: msg });
+            if (!ehTime() && !antes && podePedir()) aviso("Base liberada: nenhum lead em Novo ou Prospecção. Você já pode pedir uma nova base.");
+          } catch (e) { cfBox.querySelectorAll("button, input").forEach(x => { x.disabled = false; }); aviso(API.traduzir(e), true); }
+        };
+        cfBox.querySelectorAll("[data-como]").forEach(b => b.addEventListener("click", async () => {
+          const v = b.dataset.como;
+          cfBox.querySelectorAll("[data-como]").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+          if (v === "interesse") {
+            if (cf.contato) marcar(cf.contato, "ok");
+            if (["Novo", "Prospecção", "Sem interesse", "Contato inválido"].includes(l.status)) {
+              dec.dados.status = "Em negociação";
+              if (l.motivo || l.tentar_em) Object.assign(dec.dados, { motivo: "", motivo_outro: "", tentar_em: "" });
+            }
+            passo("quando");
+          } else if (v === "sem") {
+            passo("motivo");
+          } else if (v === "errado") {
+            if (cf.contato) marcar(cf.contato, "nao");
+            if (contatoValidoDe(l, dec.ok, dec.nao) === "Não") {
+              await gravar({ status: "Contato inválido", retorno: "", retorno_hora: "", lembrete: "" }, "Nenhum contato funciona: o lead foi para Contato inválido. Tudo salvo.");
+              return;
+            }
+            cfBox.querySelector("#cf-q-quando").textContent = "Quando você tenta outro contato?";
+            passo("quando");
+          } else passo("quando");
+        }));
+        const salvarMotivo = (m, outro) => gravar({ status: "Sem interesse", motivo: m, motivo_outro: m === "Outro motivo" ? outro : "", tentar_em: "", retorno: "", retorno_hora: "", lembrete: "" },
+          `Sem interesse (${m === "Outro motivo" ? outro : m}). Tudo salvo.`);
+        cfBox.querySelectorAll("[data-cf-motivo]").forEach(b => b.addEventListener("click", () => {
+          const m = b.dataset.cfMotivo;
+          if (m === "Outro motivo") { cfBox.querySelector("#cf-outro-c").hidden = false; cfBox.querySelector("#cf-outro").focus(); return; }
+          salvarMotivo(m, "");
+        }));
+        cfBox.querySelector("#cf-outro-ok").addEventListener("click", () => {
+          const t = cfBox.querySelector("#cf-outro").value.trim();
+          if (!t) { cfBox.querySelector("#cf-outro").focus(); return; }
+          salvarMotivo("Outro motivo", t);
+        });
+        const salvarQuando = (d) => {
+          // Lead em Sem interesse que está sendo retomado: a data vira "tentar de novo" (ele continua sem travar a base).
+          const extra = l.status === "Sem interesse" && !dec.dados.status ? { tentar_em: d } : { retorno: d, retorno_hora: "", lembrete: "" };
+          return gravar(extra, `${dec.dados.status ? "Lead em " + dec.dados.status + ". " : ""}Próximo contato em ${data(d)}. Tudo salvo.`);
+        };
+        cfBox.querySelectorAll("[data-cf-quando]").forEach(b => b.addEventListener("click", () => {
+          if (b.dataset.cfQuando === "outra") { cfBox.querySelector("#cf-data-c").hidden = false; cfBox.querySelector("#cf-data").focus(); return; }
+          salvarQuando(b.dataset.cfQuando);
+        }));
+        cfBox.querySelector("#cf-data-ok").addEventListener("click", () => {
+          const d = cfBox.querySelector("#cf-data").value;
+          if (!d || d < hojeISO()) { aviso("Escolha hoje ou uma data futura.", true); return; }
+          salvarQuando(d);
+        });
+        cfBox.querySelector("#cf-pular").addEventListener("click", () => { cfBox.remove(); blocoAgenda.hidden = false; blocoAgenda.scrollIntoView({ block: "center", behavior: "smooth" }); });
+        setTimeout(() => cfBox.scrollIntoView({ block: "center", behavior: "smooth" }), 60);
+      }
 
 
       j.querySelector("#l-salvar").addEventListener("click", async (ev) => {
@@ -1556,7 +2047,6 @@
         ["motivo", "motivo_outro", "tentar_em", "retorno", "retorno_hora", "lembrete", "volume", "destinos", "transportadora"].forEach(k => {
           if (k in dados && (dados[k] || "") === (l[k] || "")) delete dados[k];
         });
-        if (!(await confirmar({ titulo: `Salvar ${l.empresa}?`, texto: `Status: ${esc(st.value)}${dados.retorno ? ` · próximo contato em ${data(dados.retorno)}` : ""}.`, botao: "Salvar" }))) return;
         try {
           const novo = await ocupado(bt, async () => {
             const r = await API.atualizarLead(id, dados);
@@ -1565,7 +2055,7 @@
             if (obsPendente) { await API.registrar(id, "observacao", obsPendente); obsCampo.value = ""; }
             return r;
           });
-          Object.assign(l, novo); fechar();
+          Object.assign(l, novo); salvou = true; fechar();
           await aposMudarLead((st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.") + (obsPendente ? " A observação também foi salva." : ""));
         } catch (e) { aviso(API.traduzir(e), true); }
       });
@@ -1585,7 +2075,9 @@
   const emAndamento = () => { const p = pedidoAtualU(); return p && ["Nova", "Em extração"].includes(p.situacao) ? p : null; };
   const leadsBase = () => { const p = pedidoAtualU(); return p ? leadsU().filter(l => l.solicitacao_id === p.id) : []; };
   const abertosBase = () => leadsBase().filter(trava);
-  const podePedir = () => !emAndamento() && abertosBase().length === 0;
+  // Opção do dono: só ele pede a próxima base (padrão: todos da unidade pedem).
+  const soDonoBloqueia = (u) => { u = u || unidade(); return !!(u && u.so_dono_pede && u.dono_uid && u.dono_uid !== E.perfil.id); };
+  const podePedir = () => !emAndamento() && abertosBase().length === 0 && !soDonoBloqueia();
 
   function resumoUnidade(sigla) {
     const ps = E.pedidos.filter(p => p.sigla === sigla);
@@ -1615,25 +2107,26 @@
     const trabalhados = doBase.length - abertos;
 
     if (!base) {
-      return `<div class="vazio"><h2>Esta unidade ainda não tem leads</h2><p>Peça a primeira base escolhendo até 3 segmentos fortes e até 3 cidades. São ${MAX} leads por pedido.</p><button class="btn btn-primario" data-acao="novoPedido">Pedir leads</button></div>`;
+      return `<div class="vazio"><h2>${estaU()} ainda não tem leads</h2><p>Peça a primeira base escolhendo até 3 segmentos fortes e até 3 cidades. São ${MAX} leads por pedido.</p><button class="btn btn-primario" data-acao="novoPedido">Pedir leads</button></div>`;
     }
     let titulo, texto, acao = "";
     if (andamento) {
       titulo = "Seu pedido está com o time";
-      texto = `Pedido de ${data(andamento.criada_em)} (${esc(segmentosDe(andamento))}): ${andamento.situacao === "Nova" ? "aguardando o time" : "em extração"}. Previsão de entrega: ${esc(sexta(andamento.previsao))}, conforme a disponibilidade do time.`;
+      texto = `Pedido de ${data(andamento.criada_em)} (${esc(segmentosDe(andamento))}): ${andamento.situacao === "Nova" ? "recebido pelo time" : "o time está separando seus leads"}. Previsão de entrega: ${esc(sexta(andamento.previsao))}, conforme a disponibilidade do time.`;
     } else if (!doBase.length) {
-      titulo = `Pedido ${esc(base.id)}: ${esc(base.situacao)}`;
+      titulo = `Último pedido: ${esc(situacaoTexto(base.situacao))}`;
       texto = base.observacao_time ? esc(base.observacao_time) : "Você já pode pedir uma nova base.";
       acao = `<button class="btn btn-primario" data-acao="novoPedido">Pedir nova base</button>`;
     } else if (abertos) {
-      titulo = `Base atual: ${trabalhados} de ${doBase.length} leads trabalhados`;
-      texto = `Faltam ${abertos} lead${abertos > 1 ? "s" : ""} em Novo ou Prospecção para liberar uma nova base.`;
-      acao = `<button class="btn" disabled title="Tire todos os leads de Novo e Prospecção para pedir uma nova base">Pedir nova base</button>`;
+      titulo = `Pedido atual: ${trabalhados} de ${doBase.length} leads trabalhados`;
+      texto = `${abertos > 1 ? "Faltam" : "Falta"} ${abertos} lead${abertos > 1 ? "s" : ""} em Novo ou Prospecção para liberar uma nova base.`;
+      acao = `<button class="btn btn-primario" data-acao="verFaltam">Ver ${abertos > 1 ? `os ${abertos} leads que faltam` : "o lead que falta"}</button>`;
     } else {
-      titulo = `Base atual: ${trabalhados} de ${doBase.length} leads trabalhados`;
+      titulo = `Pedido atual: ${trabalhados} de ${doBase.length} leads trabalhados`;
       texto = `<span class="liberado">Base liberada.</span> Nenhum lead em Novo ou Prospecção. Você já pode pedir uma nova base.`;
       acao = `<button class="btn btn-primario" data-acao="novoPedido">Pedir nova base</button>`;
     }
+    if (soDonoBloqueia() && /novoPedido/.test(acao)) acao = `<p class="so-dono">Nesta unidade, quem pede a base é <b>${esc(primeiroNome(unidade().dono_nome || "o dono"))}</b>.</p>`;
     const trilha = doBase.length ? `<div class="trilha" aria-hidden="true">${doBase.slice().sort((a, b) => final(b) - final(a)).map(l =>
       final(l) ? `<span class="fim" style="background:${COR[l.status]}" title="${esc(l.status)}"></span>` : `<span title="${esc(l.status)}" style="border-color:${COR[l.status]}"></span>`).join("")}</div>` : "";
     return `<section class="base">${icone("aviao")}<div><h2>${titulo}</h2><p>${texto}</p>${trilha}</div><div>${acao}</div></section>`;
@@ -1644,13 +2137,19 @@
     if (!leadsU().length) return "";
     const hoje = hojeISO();
     const ordem = (l) => (l.retorno && l.retorno < hoje ? "0" : "1") + (l.retorno || l.tentar_em || "") + (l.retorno_hora || "99:99");
-    const lista = leadsU().filter(paraHoje).sort((a, b) => ordem(a).localeCompare(ordem(b)));
-    if (!lista.length) return `<section class="hoje hoje-vazio"><b>Para hoje</b><span>Nenhum contato marcado para hoje. Na ficha de cada lead, use “Próximo contato” para montar sua agenda.</span></section>`;
+    const equipe = temEquipe((unidade() || {}).sigla);
+    const soMeus = equipe && (E.hojeQuem || "meus") === "meus";
+    const todosHoje = leadsU().filter(paraHoje);
+    const lista = todosHoje.filter(l => !soMeus || meuLead(l)).sort((a, b) => ordem(a).localeCompare(ordem(b)));
+    const pilQuem = equipe ? `<div class="pilulas pilulas-mini" role="group" aria-label="De quem">
+          <button data-hoje-quem="meus" aria-pressed="${soMeus}">Meus (${todosHoje.filter(meuLead).length})</button><button data-hoje-quem="todos" aria-pressed="${!soMeus}">Da unidade (${todosHoje.length})</button></div>` : "";
+    if (!lista.length) return `<section class="hoje hoje-vazio"><b>Para hoje</b><span>${soMeus && todosHoje.length ? `Nenhum contato seu para hoje. A unidade tem ${todosHoje.length}: toque em “Da unidade” para ver.` : "Nenhum contato marcado para hoje. Na ficha de cada lead, use “Próximo contato” para montar sua agenda."}</span>${pilQuem}</section>`;
     // Cartões ou Lista: a pessoa escolhe; sem escolha, com mais de 3 contatos abre em Lista.
     let salva = null; try { salva = localStorage.getItem("portal-vista-hoje"); } catch (e) { /* ignora */ }
     const emLista = (E.vistaHoje || salva || (lista.length > 3 ? "lista" : "cartoes")) === "lista";
     return `<section class="hoje" aria-label="Para hoje">
       <div class="hoje-topo"><h2>Para hoje <span class="qtd-hoje">${lista.length} contato${lista.length > 1 ? "s" : ""}</span></h2>
+        ${pilQuem}
         <div class="pilulas pilulas-mini" role="group" aria-label="Forma de ver o Para hoje">
           <button data-vista-hoje="cartoes" aria-pressed="${!emLista}">Cartões</button><button data-vista-hoje="lista" aria-pressed="${emLista}">Lista</button></div></div>
       <div class="hoje-lista${emLista ? " em-lista" : ""}">${lista.map(l => {
@@ -1663,7 +2162,7 @@
         return `<div class="hoje-item${atrasado ? " atrasado" : ""}" data-lead="${esc(l.id)}" role="button" tabindex="0" aria-label="${esc(l.empresa)}">
           <span class="hoje-quando">${rotuloDia}</span>
           <b>${esc(l.empresa)}</b>
-          <span class="sec">${esc([l.contato, l.status, n ? `${n} tentativa${n > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · "))}</span>
+          <span class="sec">${esc([l.contato, l.status, n ? `${n} tentativa${n > 1 ? "s" : ""}` : "", !soMeus && l.cuida_nome && l.cuida_uid !== E.perfil.id ? "com " + l.cuida_nome : ""].filter(Boolean).join(" · "))}</span>
           ${l.lembrete ? `<span class="hoje-lembrete">“${esc(l.lembrete)}”</span>` : ""}
           <div class="hoje-acoes">
             ${tel ? `<button class="btn btn-p btn-zap nao-abre" data-hoje="whatsapp" data-id="${esc(l.id)}">WhatsApp</button><button class="btn btn-p nao-abre" data-hoje="ligacao" data-id="${esc(l.id)}">Ligar</button>` : mail ? `<button class="btn btn-p nao-abre" data-hoje="email" data-id="${esc(l.id)}">E-mail</button>` : ""}
@@ -1676,6 +2175,7 @@
   function telaLeadsRep() {
     const u = unidade();
     const base = pedidoAtualU();
+    if (E.f.faltam && !abertosBase().length) E.f.faltam = false; // a base liberou: volta a mostrar todos
     let lista = leadsU();
     if (E.f.base === "atual" && base) lista = lista.filter(l => l.solicitacao_id === base.id);
     lista = filtrarLeads(lista);
@@ -1689,10 +2189,11 @@
       ${temLeads ? `
         <div class="filtros">
           <div class="campo busca"><label for="f-busca">Buscar</label><input id="f-busca" type="search" data-filtro="busca" value="${esc(E.f.busca)}" placeholder="Empresa, CNPJ, contato ou telefone"></div>
-          <div class="campo"><label for="f-base">Base</label><select id="f-base" data-filtro="base"><option value="atual"${E.f.base === "atual" ? " selected" : ""}>Base atual</option><option value="todas"${E.f.base === "todas" ? " selected" : ""}>Todas as bases</option></select></div>
+          <div class="campo"><label for="f-base">Pedido</label><select id="f-base" data-filtro="base"><option value="atual"${E.f.base === "atual" ? " selected" : ""}>Pedido atual</option><option value="todas"${E.f.base === "todas" ? " selected" : ""}>Todos os pedidos</option></select></div>
           <div class="campo"><label for="f-status">Status</label><select id="f-status" data-filtro="status">${opcoes(NOMES_STATUS, E.f.status, "Todos")}</select></div>
           ${seletorVista()}
         </div>
+        ${E.f.faltam ? `<div class="aviso-filtro" id="aviso-faltam"><span>Mostrando só os leads em <b>Novo</b> ou <b>Prospecção</b>. Tire todos daí para liberar uma nova base.</span><button class="btn btn-p" data-acao="verTodos">Mostrar todos</button></div>` : ""}
         ${E.vista === "kanban" ? quadro(lista) : tabelaLeads(lista)}` : ""}`;
   }
 
@@ -1703,17 +2204,18 @@
 
   function telaPedidosRep() {
     const pode = podePedir();
-    const motivo = emAndamento() ? "Esta unidade já tem um pedido em andamento." : abertosBase().length ? `Tire os ${abertosBase().length} leads de Novo e Prospecção para pedir uma nova base.` : "";
+    const motivo = emAndamento() ? `${estaU()} já tem um pedido em andamento.` : abertosBase().length ? `Tire os ${abertosBase().length} leads de Novo e Prospecção para pedir uma nova base.` : "";
+    const donoPede = soDonoBloqueia() ? ` Nesta unidade, quem pede a base é ${primeiroNome((unidade() || {}).dono_nome || "o dono")}.` : "";
     const ps = pedidosU();
     return `
-      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Meus pedidos</h1><p>${pode ? "Você pode pedir uma nova base agora." : esc(motivo)}</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Meus pedidos</h1><p>${pode ? "Você pode pedir uma nova base agora." : esc(motivo + donoPede)}</p></div>
         <div class="acoes"><button class="btn btn-primario" data-acao="novoPedido"${pode ? "" : " disabled"}>Pedir nova base</button></div></div>
       ${barraUnidades()}
       ${quemCuida(ps)}
       ${ps.length ? `<div class="tabela-wrap"><table>
-        <thead><tr><th>Pedido</th><th>Data</th><th>Previsão</th><th>Segmentos</th><th>Cidades</th><th>Empresas indicadas</th><th>Situação</th><th>Leads trabalhados</th></tr></thead>
+        <thead><tr><th>Data</th><th>Pedido por</th><th>Previsão</th><th>Segmentos</th><th>Cidades</th><th>Empresas indicadas</th><th>Situação</th><th>Leads trabalhados</th></tr></thead>
         <tbody>${ps.map(p => `<tr>
-          <td>${esc(p.id)}</td><td>${data(p.criada_em)}</td><td>${data(p.previsao)}</td><td>${esc(segmentosDe(p))}</td><td>${esc(cidadesDe(p) || "–")}</td><td class="sec" style="white-space:pre-line">${esc(p.empresas || "")}</td>
+          <td>${data(p.criada_em)}</td><td>${esc(p.solicitante === E.perfil.id ? "Você" : primeiroNome(p.solicitante_nome) || "–")}</td><td>${data(p.previsao)}</td><td>${esc(segmentosDe(p))}</td><td>${esc(cidadesDe(p) || "–")}</td><td class="sec" style="white-space:pre-line">${esc(p.empresas || "")}</td>
           <td>${chipSituacao(p.situacao)}${donoPedido(p) && !donoPedido(p).porRegiao ? `<div class="sec">com ${esc(primeiroNome(donoPedido(p).nome))}</div>` : ""}${p.observacao_time ? `<div class="sec">${esc(p.observacao_time)}</div>` : ""}</td><td>${contagem(p)}</td></tr>`).join("")}</tbody>
       </table></div>` : `<div class="vazio"><h2>Nenhum pedido ainda</h2><p>O primeiro pedido desta unidade aparece aqui com a situação de cada etapa.</p></div>`}`;
   }
@@ -1724,10 +2226,10 @@
     const aberto = ps.find(p => ["Nova", "Em extração", "Enviada"].includes(p.situacao));
     const d = (aberto && donoPedido(aberto) && !donoPedido(aberto).porRegiao) ? donoPedido(aberto) : responsavelRegiao(u.regiao);
     if (!d) return `<div class="quem-cuida fila"><div class="avatar" aria-hidden="true">IS</div>
-      <div class="txt"><small>Quem cuida da sua unidade</small><b>Time de ${esc(TIME)}</b><span class="sub">${aberto ? "Seu pedido está na fila do time. Quando alguém assumir, o nome aparece aqui." : "O primeiro do time que puxar o seu pedido passa a ser o seu contato."}</span></div></div>`;
+      <div class="txt"><small>Quem cuida da ${suaU()}</small><b>Time de ${esc(TIME)}</b><span class="sub">${aberto ? "Seu pedido está na fila do time. Quando alguém assumir, o nome aparece aqui." : "O primeiro do time que puxar o seu pedido passa a ser o seu contato."}</span></div></div>`;
     const link = zap(d.celular, `Olá, ${primeiroNome(d.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, da unidade ${u.sigla}.`);
     return `<div class="quem-cuida"><div class="avatar" aria-hidden="true">${esc((d.nome || "?").charAt(0).toUpperCase())}</div>
-      <div class="txt"><small>Quem cuida da sua unidade</small><b>${esc(d.nome)} · ${esc(TIME)}${u.regiao ? " " + esc(u.regiao) : ""}</b>${d.substituindo ? `<span class="sub">Cobrindo ${esc(d.substituindo)} nas férias</span>` : ""}</div>
+      <div class="txt"><small>Quem cuida da ${suaU()}</small><b>${esc(d.nome)} · ${esc(TIME)}${u.regiao ? " " + esc(u.regiao) : ""}</b>${d.substituindo ? `<span class="sub">Cobrindo ${esc(d.substituindo)} nas férias</span>` : ""}</div>
       ${link ? `<a class="btn btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}</div>`;
   }
 
@@ -1762,7 +2264,7 @@
     const perfilPendente = (p) => !!(p.perfil && p.perfil.situacao === "pendente");
     return `
       <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha equipe</h1>
-        <p>Unidade ${esc(rotulo(u.sigla))}${u.cidade_uf ? ", " + esc(u.cidade_uf) : ""}. Você é o dono: convide os vendedores e libere quem pedir acesso. Todos da equipe pedem e trabalham os leads da unidade.</p></div>
+        <p>Unidade ${esc(rotulo(u.sigla))}${u.cidade_uf ? ", " + esc(u.cidade_uf) : ""}. Você é o dono: convide os vendedores e libere quem pedir acesso. ${u.so_dono_pede ? "Todos trabalham os leads, e só você pede a próxima base." : "Todos da equipe pedem e trabalham os leads da unidade."}</p></div>
         <div class="acoes"><button class="btn btn-primario" data-acao="convidar" data-sigla="${esc(u.sigla)}">+ Convidar pessoa</button></div></div>
       ${donas.length > 1 ? `<div class="pilulas" role="group" aria-label="Unidade" style="margin-bottom:16px">${donas.map(x => `<button data-unidade="${esc(x.sigla)}" aria-pressed="${x.sigla === u.sigla}">${esc(rotulo(x.sigla))}${(E.equipe[x.sigla] || { pessoas: [] }).pessoas.some(p => p.situacao === "pendente" && p.uid !== E.perfil.id) ? " •" : ""}</button>`).join("")}</div>` : ""}
       ${eq.erro ? `<div class="erro-form">${esc(eq.erro)}</div>` : ""}
@@ -1774,6 +2276,11 @@
           <td><div class="acoes"><button class="btn btn-p btn-primario" data-acao="liberarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}" data-perfil="${perfilPendente(p) ? 1 : ""}">Liberar</button>
             <button class="btn btn-p btn-perigo" data-acao="recusarEquipe" data-id="${esc(p.uid)}" data-sigla="${esc(u.sigla)}" data-perfil="${perfilPendente(p) ? 1 : ""}">Recusar</button></div></td></tr>`).join("")}
         </tbody></table></div></section>` : ""}
+      <section class="bloco quem-pede" style="margin-bottom:18px"><h2>Quem pede a próxima base</h2>
+        <p class="sub">Todos continuam trabalhando os leads. Isto só decide quem pode pedir a base nova quando a atual for liberada.</p>
+        <div class="pilulas" role="group" aria-label="Quem pede a próxima base">
+          <button data-acao="quemPede" data-sigla="${esc(u.sigla)}" data-valor="todos" aria-pressed="${!u.so_dono_pede}">Todos da unidade</button>
+          <button data-acao="quemPede" data-sigla="${esc(u.sigla)}" data-valor="dono" aria-pressed="${!!u.so_dono_pede}">Só eu (dono)</button></div></section>
       <section class="bloco" style="margin-bottom:18px"><h2>Equipe da unidade (${ativos.length})</h2>
         <div class="tabela-wrap" style="border:0"><table><thead><tr><th>Nome</th><th>E-mail</th><th>Celular</th><th>Ações</th></tr></thead><tbody>
         ${ativos.map(p => { const eu = p.uid === E.perfil.id; const link = !eu && pessoaCel(p) ? zap(pessoaCel(p), `Olá, ${primeiroNome(p.nome)}! Aqui é ${primeiroNome(E.perfil.nome)}, da unidade ${u.sigla}.`) : "";
@@ -1799,6 +2306,51 @@
           <li>Mande o link pelo WhatsApp. Ele vale ${VALIDADE_CONVITE} dias e só funciona com o e-mail convidado.</li>
           <li>A pessoa cria a senha e já entra liberada na unidade, sem esperar aprovação.</li></ol>
         <p class="sub">Quem criar o acesso sozinho pela tela de entrada aparece em <b>Aguardando você</b>.</p></section>`;
+  }
+
+  // ---- Minha equipe do coordenador ou gerente: carteiras de quem responde a ele, só consulta ----
+  function telaGestao() {
+    const us = (E.equipeComercial || []).slice().sort((a, b) => String(a.exec_nome || a.nome).localeCompare(String(b.exec_nome || b.nome)));
+    const hoje = hojeISO();
+    const linhas = us.map(u => {
+      const ps = (E.pedidosEquipe || []).filter(p => p.sigla === u.sigla);
+      const atual = ps[0];
+      const ls = (E.leadsEquipe || []).filter(l => l.sigla === u.sigla);
+      const doAtual = atual ? ls.filter(l => l.solicitacao_id === atual.id) : [];
+      return { u, atual, total: ls.length, base: doAtual.length, trab: doAtual.filter(final).length, par: ls.filter(parado).length,
+        atras: ls.filter(l => l.retorno && l.retorno < hoje).length, emb: ls.filter(l => EMBARQUE.includes(l.status)).length,
+        direto: !u.exec_gestor || u.exec_gestor === E.perfil.nome };
+    });
+    const soma = (k) => linhas.reduce((t, x) => t + x[k], 0);
+    return `
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Minha equipe</h1><p>Carteiras de quem responde a você. Aqui é só consulta: quem trabalha os leads é cada executivo.</p></div>
+        <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
+      ${E.erroEquipe ? `<div class="erro-form">${esc(E.erroEquipe)}</div>` : ""}
+      <div class="indicadores">
+        <div class="indicador">${icone("leads")}<div class="valor">${linhas.length}</div><div class="rotulo">Executivos acompanhados</div></div>
+        <div class="indicador${soma("par") ? " atencao" : ""}">${icone("alerta")}<div class="valor">${soma("par")}</div><div class="rotulo">Leads parados em Novo ou Prospecção há mais de ${PRAZO} dias</div></div>
+        <div class="indicador${soma("atras") ? " atencao" : ""}">${icone("retorno")}<div class="valor">${soma("atras")}</div><div class="rotulo">Retornos atrasados</div></div>
+        <div class="indicador">${icone("fechado")}<div class="valor">${soma("emb")}</div><div class="rotulo">Embarques iniciados</div></div>
+      </div>
+      <section class="bloco" style="padding:0;overflow:hidden"><h2 style="padding:18px 20px 0">Por executivo</h2>
+        <div class="tabela-wrap" style="border:0;border-radius:0"><table>
+          <thead><tr><th>Executivo</th><th>Pedido atual</th><th>Parados</th><th>Retornos atrasados</th><th>Embarques</th><th></th></tr></thead>
+          <tbody>${linhas.map(x => `<tr><td><b>${esc(x.u.exec_nome || x.u.nome || x.u.sigla)}</b><div class="sec">${esc(x.u.exec_nivel || "Executivo")}${x.u.exec_gestor && !x.direto ? " · responde a " + esc(primeiroNome(x.u.exec_gestor)) : ""} · ${esc(x.u.cidade_uf || "")}</div></td>
+            <td>${x.atual ? `${x.trab} de ${x.base} trabalhados<div class="sec">${esc(situacaoTexto(x.atual.situacao))} · ${data(x.atual.criada_em)}</div>` : `<span class="sec">Nenhum pedido ainda</span>`}</td>
+            <td${x.par ? ' style="color:var(--danger);font-weight:600"' : ""}>${x.par}</td><td${x.atras ? ' style="color:var(--danger);font-weight:600"' : ""}>${x.atras}</td><td>${x.emb}</td>
+            <td><button class="btn btn-p" data-acao="verCarteira" data-sigla="${esc(x.u.sigla)}"${x.total ? "" : " disabled"}>Ver leads</button></td></tr>`).join("")}</tbody></table></div>
+      </section>`;
+  }
+  function janelaCarteiraEquipe(sigla) {
+    const u = (E.equipeComercial || []).find(x => x.sigla === sigla) || {};
+    const ls = (E.leadsEquipe || []).filter(l => l.sigla === sigla).sort((a, b) => (parado(b) - parado(a)) || String(a.status).localeCompare(String(b.status)));
+    abrir(`
+      <div class="janela-topo"><div><h2>${esc(u.exec_nome || u.nome || sigla)}</h2><p>${ls.length} leads · só consulta</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo"><div class="tabela-wrap"><table><thead><tr><th>Empresa</th><th>Status</th><th>Último contato</th><th>Próximo contato</th></tr></thead><tbody>
+        ${ls.map(l => `<tr><td><b>${esc(l.empresa)}</b><div class="sec">${esc([l.segmento, l.cidade_uf].filter(Boolean).join(" · "))}</div></td><td>${chipStatus(l.status)}${parado(l) ? `<div class="sec" style="color:var(--danger)">Parado</div>` : ""}</td>
+          <td>${l.ultima_tentativa ? data(l.ultima_tentativa) + `<div class="sec">${tentativasDe(l)} tentativa${tentativasDe(l) === 1 ? "" : "s"}</div>` : "–"}</td><td>${l.retorno ? `<span${l.retorno < hojeISO() ? ' style="color:var(--danger);font-weight:600"' : ""}>${data(l.retorno)}</span>` : "–"}</td></tr>`).join("")}
+      </tbody></table></div></div>
+      <div class="janela-rodape"><button class="btn btn-primario" data-fechar>Fechar</button></div>`, () => rotularTabelasEm($janela));
   }
 
   function janelaConvidar(sigla, pre) {
@@ -1874,18 +2426,27 @@
     entrada.addEventListener("input", filtrar);
     entrada.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); const p = lista.querySelector("[data-seg]"); if (p) p.click(); } });
     desenharChips();
+    let ouvinte = null;
+    const avisar = () => { if (ouvinte) ouvinte(); };
+    chips.addEventListener("click", () => setTimeout(avisar, 0));
+    lista.addEventListener("click", () => setTimeout(avisar, 0));
+    return {
+      adicionar(sg) { if (escolhidos.length >= 3 || escolhidos.includes(sg)) return; escolhidos.push(sg); desenharChips(); filtrar(); avisar(); },
+      aoMudar(f) { ouvinte = f; }
+    };
   }
 
   function janelaNovoPedido() {
     const opcoesU = minhasUnidades();
     const atual = unidade();
-    if (!podePedir()) { aviso(emAndamento() ? "Esta unidade já tem um pedido em andamento." : "Tire todos os leads de Novo e Prospecção para pedir uma nova base.", true); return; }
+    if (!podePedir()) { aviso(soDonoBloqueia() ? `Nesta unidade, quem pede a base é ${primeiroNome(atual.dono_nome || "o dono")}. Avise quando os leads estiverem trabalhados.` : emAndamento() ? `${estaU()} já tem um pedido em andamento.` : "Tire todos os leads de Novo e Prospecção para pedir uma nova base.", true); return; }
     const escolhidos = [];
     abrir(`
       <div class="janela-topo"><div><h2>Pedir nova base de leads</h2><p>Cada pedido traz até ${MAX} leads</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
-        <div class="campo"><label for="p-unid">Unidade</label><select id="p-unid"${opcoesU.length < 2 ? " disabled" : ""}>${opcoesU.map(u => `<option value="${esc(u.sigla)}"${u.sigla === atual.sigla ? " selected" : ""}>${esc(rotulo(u.sigla))} · ${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}</option>`).join("")}</select></div>
-        <div class="campo busca-seg"><label for="p-busca">Segmentos (até 3)</label><input id="p-busca" type="text" autocomplete="off"><div class="lista-seg" id="p-lista" hidden></div><div class="chips" id="p-chips"></div></div>
+        <div class="campo"><label for="p-unid">${ehExec() ? "Carteira" : "Unidade"}</label><select id="p-unid"${opcoesU.length < 2 ? " disabled" : ""}>${opcoesU.map(u => `<option value="${esc(u.sigla)}"${u.sigla === atual.sigla ? " selected" : ""}>${esc(rotulo(u.sigla))} · ${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}</option>`).join("")}</select></div>
+        <div class="campo busca-seg"><label for="p-busca">Segmentos (até 3)</label><input id="p-busca" type="text" autocomplete="off"><div class="lista-seg" id="p-lista" hidden></div><div class="chips" id="p-chips"></div>
+          <div class="seg-sugeridos" id="p-sugest" hidden></div></div>
         <div class="campo"><label>Cidades de interesse (até 3, opcional)</label><div class="grade-3"><input type="text" id="p-c1" placeholder="Cidade/UF"><input type="text" id="p-c2" placeholder="Cidade/UF"><input type="text" id="p-c3" placeholder="Cidade/UF"></div></div>
         <div class="campo"><label for="p-emp">Empresas específicas (opcional)</label><textarea id="p-emp" rows="3" placeholder="Razão social, CNPJ ou CNAE, um por linha"></textarea></div>
         <div class="info-pedido">ℹ️ <span>Cada pedido traz <b>até ${MAX} leads</b>. A base chega na <b>sexta-feira</b> seguinte ao pedido, conforme a disponibilidade do time.</span></div>
@@ -1893,8 +2454,19 @@
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-primario" id="p-enviar">Enviar pedido</button></div>`,
     (j) => {
-      campoSegmentos(j, escolhidos);
-      j.querySelector("#p-unid").addEventListener("change", (e) => { escolherUnidade(e.target.value); if (!podePedir()) { fechar(); desenhar(); aviso(`A unidade ${e.target.value} ainda não pode pedir uma nova base.`, true); } });
+      const seg = campoSegmentos(j, escolhidos);
+      ["#p-c1", "#p-c2", "#p-c3"].forEach(x => ligarCidade(j.querySelector(x)));
+      const sugerir = () => {
+        const caixa = j.querySelector("#p-sugest"), u = unidade();
+        const lista = segmentosSugeridos(u && u.regiao).filter(x => !escolhidos.includes(x.seg));
+        if (!lista.length || escolhidos.length >= 3) { caixa.hidden = true; caixa.innerHTML = ""; return; }
+        caixa.innerHTML = `<p class="sug-titulo">Mais viraram negócio na região ${esc(u.regiao)}:</p><div class="sug-lista">${lista.map(x =>
+          `<button type="button" class="sug" data-sug="${esc(x.seg)}">+ ${esc(x.seg)}<small>${x.b ? `${x.b} embarque${x.b > 1 ? "s" : ""}` : `${x.n} em negociação`}</small></button>`).join("")}</div>`;
+        caixa.hidden = false;
+        caixa.querySelectorAll("[data-sug]").forEach(b => b.addEventListener("click", () => { seg.adicionar(b.dataset.sug); }));
+      };
+      seg.aoMudar(sugerir); sugerir();
+      j.querySelector("#p-unid").addEventListener("change", (e) => { escolherUnidade(e.target.value); if (!podePedir()) { fechar(); desenhar(); aviso(`A unidade ${e.target.value} ainda não pode pedir uma nova base.`, true); return; } sugerir(); });
       j.querySelector("#p-enviar").addEventListener("click", async (ev) => {
         const erro = j.querySelector("#p-erro");
         const u = unidade();
@@ -1935,6 +2507,7 @@
       </div>
       <div class="janela-rodape"><button class="btn" data-fechar>Cancelar</button><button class="btn btn-primario" id="u-enviar">Pedir acesso</button></div>`,
     (j) => {
+      ligarCidade(j.querySelector("#u-cidade"), j.querySelector("#u-regiao"));
       j.querySelector("#u-enviar").addEventListener("click", async (ev) => {
         const erro = j.querySelector("#u-erro");
         const sigla = j.querySelector("#u-sigla").value.trim().toUpperCase();
@@ -1997,11 +2570,88 @@
           <td><b>${esc(rotulo(p.sigla))}</b><div class="sec">${esc(p.cidade_uf)} · ${esc(p.regiao)}</div></td>
           <td>${esc(p.solicitante_nome)}<div class="sec">${esc(foneBonito(perfilDe(p.solicitante).celular || ""))}</div></td>
           <td>${esc(segmentosDe(p))}${cidadesDe(p) ? `<div class="sec">Cidades: ${esc(cidadesDe(p))}</div>` : ""}${p.empresas ? `<div class="sec">Empresas: ${esc(p.empresas.slice(0, 60))}</div>` : ""}</td>
-          <td>${chipSituacao(p.situacao)}</td><td>${(() => { const d = donoPedido(p);
+          <td>${chipSituacao(p.situacao)}${p.enviada_em ? `<div class="aviso-selo">${seloAviso(p)}</div>` : ""}</td><td>${(() => { const d = donoPedido(p);
             if (!d) return `<span class="sec">Livre</span><br><button class="btn btn-p btn-primario nao-abre" data-acao="puxar" data-id="${esc(p.id)}">Puxar para mim</button>`;
             return `<b>${esc(d.nome)}</b>${d.porRegiao ? `<div class="sec">pela região${d.substituindo ? ", cobrindo " + esc(d.substituindo) : ""}</div>` : ""}`; })()}</td><td>${contagem(p)}</td></tr>`;
         }).join("")}</tbody>
       </table></div>` : `<div class="vazio"><h2>${E.f.carteira === "minha" ? "Nenhum pedido aguardando na sua carteira" : E.f.carteira === "livres" ? "Nenhum pedido livre" : "Nenhum pedido aguardando"}</h2><p>Quando uma unidade pedir leads, o pedido aparece aqui. Mude a aba ou a situação para ver os outros.</p></div>`}`;
+  }
+
+  // Aviso à unidade: o portal registra quando o time clicou no WhatsApp para avisar ou cobrar.
+  function seloAviso(p, longo) {
+    if (!p.enviada_em) return `<span class="sec">–</span>`;
+    const partes = [];
+    partes.push(p.avisado_em ? `<span class="etiqueta ok">Avisado ✓</span>${longo ? ` <span class="sec">em ${data(p.avisado_em)}${p.avisado_por ? " por " + esc(p.avisado_por) : ""}</span>` : ""}` : `<span class="etiqueta alerta">Sem aviso</span>`);
+    if (p.cobrado_em) partes.push(`<span class="sec">${longo ? "Cobrado em " + data(p.cobrado_em) + (p.cobrado_por ? " por " + esc(p.cobrado_por) : "") : "cobrado " + (dias(p.cobrado_em) ? "há " + dias(p.cobrado_em) + " dia(s)" : "hoje")}</span>`);
+    return partes.join(longo ? "<br>" : " ");
+  }
+  async function marcarAviso(pid, tipo, depois) {
+    const quem = primeiroNome(E.perfil.nome);
+    const dados = tipo === "cobrado" ? { cobrado_em: true, cobrado_por: quem } : { avisado_em: true, avisado_por: quem };
+    try {
+      await API.atualizarPedido(pid, dados);
+      await carregar(); desenhar();
+      aviso(tipo === "cobrado" ? `Cobrança de ${pid} registrada.` : `Aviso de ${pid} registrado.`);
+      if (depois) depois();
+    } catch (e) { aviso(API.traduzir(e), true); }
+  }
+
+  // Tarefas do dia do time: o que falta fazer, já em ordem.
+  function tarefasHoje() {
+    const hoje = hojeISO();
+    const meu = (p) => !minhasRegioes().length || meuPedido(p) || pedidoLivre(p);
+    const ps = (E.pedidos || []).filter(meu);
+    const importar = ps.filter(p => ["Nova", "Em extração"].includes(p.situacao))
+      .sort((a, b) => ((a.previsao && a.previsao < hoje) ? "0" : "1").concat(a.criada_em || "").localeCompare(((b.previsao && b.previsao < hoje) ? "0" : "1").concat(b.criada_em || "")));
+    const semAviso = ps.filter(p => ["Enviada", "Concluída"].includes(p.situacao) && p.enviada_em && !p.avisado_em);
+    const cobrar = ps.filter(p => p.situacao === "Enviada" && p.enviada_em && dias(p.enviada_em) >= 7 && E.leads.some(l => l.solicitacao_id === p.id && trava(l)) && (!p.cobrado_em || dias(p.cobrado_em) >= 7));
+    const cadastros = ehAdmin() ? E.perfis.filter(p => p.situacao === "pendente") : [];
+    return { importar, semAviso, cobrar, cadastros, total: importar.length + semAviso.length + cobrar.length + cadastros.length };
+  }
+
+  function telaHojeTime() {
+    const t = tarefasHoje();
+    const hoje = hojeISO();
+    const rep = (p) => perfilDe(p.solicitante);
+    const linha = (p, extra, acao) => `<li class="tarefa">
+        <div class="tarefa-txt"><b>${esc(p.id)} · ${esc(rotulo(p.sigla))}</b><span class="sec">${esc([p.solicitante_nome, p.cidade_uf, p.regiao].filter(Boolean).join(" · "))}</span>${extra ? `<span class="sec">${extra}</span>` : ""}</div>
+        <div class="tarefa-acoes">${acao}<button class="btn btn-p" data-pedido="${esc(p.id)}">Abrir pedido</button></div></li>`;
+    const zapBtn = (p, tipo, marcar, rotuloB) => { const link = zap(rep(p).celular, mensagemPedido(p, tipo));
+      return link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener" data-marcar="${marcar}" data-pid="${esc(p.id)}">${rotuloB}</a>` : `<span class="sec">Sem celular cadastrado</span>`; };
+    const secao = (titulo, explica, itens, extraTopo) => `<section class="bloco tarefas"><div class="tarefas-topo"><h2>${titulo} <span class="qtd-hoje">${itens.length}</span></h2>${extraTopo || ""}</div><p class="sub">${explica}</p>${itens.length ? `<ul class="lista-tarefas">${itens.join("")}</ul>` : `<p class="tarefa-ok">✓ Nada pendente aqui.</p>`}</section>`;
+    return `
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Hoje</h1><p>${t.total ? `Você tem <b>${t.total}</b> ${t.total > 1 ? "coisas" : "coisa"} para fazer, em ordem de prioridade.` : "Tudo em dia. Nenhuma pendência na sua carteira."}${minhasRegioes().length ? ` Sua carteira: ${esc(listaE(minhasRegioes()))}, mais as regiões livres.` : ""}</p></div>
+        <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
+      ${secao("Pedidos para importar", "Pedidos que chegaram e ainda não têm leads. Os atrasados vêm primeiro.", t.importar.map(p => {
+        const atraso = p.previsao && p.previsao < hoje;
+        return linha(p, `${atraso ? `<b style="color:var(--danger)">Atrasado: previsão era ${data(p.previsao)}</b>` : `Previsão: ${data(p.previsao)}`} · ${esc(segmentosDe(p))}`, `<button class="btn btn-p btn-primario" data-acao="importarDe" data-id="${esc(p.id)}">Importar leads</button>`);
+      }))}
+      ${secao("Leads enviados sem aviso", "A unidade ainda não foi avisada de que os leads chegaram. Ao tocar no WhatsApp, o portal marca como avisado.",
+        t.semAviso.map(p => linha(p, `Enviados em ${data(p.enviada_em)}`, zapBtn(p, "enviada", "avisado", "Avisar no WhatsApp"))))}
+      ${secao("Unidades para cobrar", "Leads enviados há 7 dias ou mais que continuam em Novo ou Prospecção. O portal registra a cobrança e só volta a sugerir depois de 7 dias.",
+        t.cobrar.map(p => { const ab = E.leads.filter(l => l.solicitacao_id === p.id && trava(l)).length;
+          return linha(p, `${ab} lead${ab > 1 ? "s" : ""} em Novo ou Prospecção · enviados há ${dias(p.enviada_em)} dias${p.cobrado_em ? ` · última cobrança há ${dias(p.cobrado_em)} dias` : ""}`, zapBtn(p, "cobrar", "cobrado", "Cobrar no WhatsApp")); }),
+        t.cobrar.length > 1 ? `<button class="btn btn-primario" data-acao="cobrarSequencia">Cobrar as ${t.cobrar.length}, uma por vez</button>` : "")}
+      ${ehAdmin() ? secao("Cadastros esperando aprovação", "Pessoas que pediram acesso ao portal.", t.cadastros.map(p => `<li class="tarefa"><div class="tarefa-txt"><b>${esc(p.nome)}</b><span class="sec">${esc(p.email)} · pediu há ${dias(p.criadoEm)} dia(s)</span></div><div class="tarefa-acoes"><button class="btn btn-p" data-acao="irCadastros">Ver cadastros</button></div></li>`)) : ""}`;
+  }
+
+  // Cobrar várias unidades: uma janela por vez, com o WhatsApp já pronto.
+  function cobrarSequencia(fila, i) {
+    const p = fila[i];
+    if (!p) { fechar(); aviso("Cobranças registradas."); desenhar(); return; }
+    const link = zap(perfilDe(p.solicitante).celular, mensagemPedido(p, "cobrar"));
+    const ab = E.leads.filter(l => l.solicitacao_id === p.id && trava(l)).length;
+    abrir(`
+      <div class="janela-topo"><div><h2>Cobrar ${i + 1} de ${fila.length}: ${esc(rotulo(p.sigla))}</h2><p>${esc(p.solicitante_nome || "")} · ${ab} lead${ab > 1 ? "s" : ""} em Novo ou Prospecção</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo"><p>Toque no botão verde, envie a mensagem no WhatsApp e volte aqui para ir à próxima unidade.</p>
+        <pre class="msg-previa">${esc(mensagemPedido(p, "cobrar"))}</pre>
+        ${link ? `<a class="btn btn-zap" href="${esc(link)}" target="_blank" rel="noopener" id="seq-zap">Abrir o WhatsApp de ${esc(primeiroNome(p.solicitante_nome))}</a>` : `<p class="sec">Esta pessoa não tem celular cadastrado.</p>`}</div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Parar</button><button class="btn btn-primario" id="seq-prox">${i + 1 < fila.length ? "Próxima unidade" : "Terminar"}</button></div>`,
+    (j) => {
+      const z = j.querySelector("#seq-zap");
+      if (z) z.addEventListener("click", () => { API.atualizarPedido(p.id, { cobrado_em: true, cobrado_por: primeiroNome(E.perfil.nome) }).catch(e => aviso(API.traduzir(e), true)); j.querySelector("#seq-prox").focus(); });
+      j.querySelector("#seq-prox").addEventListener("click", async () => { await carregar(); cobrarSequencia(fila, i + 1); });
+    });
   }
 
   function mensagemPedido(p, tipo) {
@@ -2022,6 +2672,7 @@
     const tipoMsg = ["Enviada", "Concluída"].includes(p.situacao) ? (ls.some(trava) ? "cobrar" : "enviada") : p.situacao === "Sem leads" ? "sem" : "recebido";
     const linkZap = zap(rep.celular, mensagemPedido(p, tipoMsg));
     const rotuloZap = { cobrar: "Cobrar retorno no WhatsApp", enviada: "Avisar no WhatsApp", sem: "Avisar no WhatsApp", recebido: "Avisar que recebemos" }[tipoMsg];
+    const marcarTipo = tipoMsg === "cobrar" ? "cobrado" : tipoMsg === "enviada" ? "avisado" : "";
     abrir(`
       <div class="janela-topo"><div><h2>Pedido ${esc(p.id)} · ${esc(rotulo(p.sigla))}</h2><p>${data(p.criada_em)}, ${esc(p.solicitante_nome || "")}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
@@ -2033,9 +2684,10 @@
           <dt>Unidade</dt><dd>${esc(p.cidade_uf)}, ${esc(p.regiao)}</dd>
           <dt>Representante</dt><dd>${esc(p.solicitante_nome)}<br><span class="sec">${esc(rep.email || "")} ${esc(foneBonito(rep.celular || ""))}</span></dd>
           <dt>Leads</dt><dd>${ls.length ? `${ls.length} de ${MAX} enviados, ${ls.filter(final).length} trabalhados` : "Nenhum lead enviado"}${p.enviada_em ? ` (enviados em ${data(p.enviada_em)})` : ""}</dd>
+          ${p.enviada_em ? `<dt>Aviso à unidade</dt><dd>${seloAviso(p, true)}</dd>` : ""}
         </dl>
         <div class="contatos">
-          ${linkZap ? `<a class="btn btn-zap btn-p" href="${esc(linkZap)}" target="_blank" rel="noopener">${rotuloZap}</a>` : ""}
+          ${linkZap ? `<a class="btn btn-zap btn-p" href="${esc(linkZap)}" target="_blank" rel="noopener" id="pt-zap">${rotuloZap}</a>` : ""}
           <button class="btn btn-p btn-primario" id="pt-importar"${ls.length >= MAX ? ` disabled title="Este pedido já tem ${MAX} leads"` : ""}>${ls.length ? "Importar mais leads" : "Importar leads"}</button>
           ${p.situacao === "Nova" ? `<button class="btn btn-p" id="pt-assumir">Assumir pedido</button>` : ""}
         </div>
@@ -2072,6 +2724,8 @@
       const assumir = j.querySelector("#pt-assumir");
       if (assumir) assumir.addEventListener("click", (ev) => salvar({ situacao: "Em extração", ...((donoPedido(p) && !donoPedido(p).porRegiao) ? {} : euComoResponsavel()) }, "Pedido assumido.", ev.currentTarget, { titulo: `Assumir o pedido ${p.id}?`, texto: (donoPedido(p) && !donoPedido(p).porRegiao && donoPedido(p).uid !== E.perfil.id) ? `O responsável continua ${esc(donoPedido(p).nome)}, e o pedido vai para Em extração.` : "Você passa a ser o responsável e o pedido vai para Em extração.", botao: "Assumir pedido" }));
       j.querySelector("#pt-importar").addEventListener("click", () => janelaImportar(p.id));
+      const ptZap = j.querySelector("#pt-zap");
+      if (ptZap && marcarTipo) ptZap.addEventListener("click", () => marcarAviso(p.id, marcarTipo, () => { if ($janela.open) janelaPedidoTime(p.id); }));
       const apagar = j.querySelector("#pt-apagar");
       if (apagar) apagar.addEventListener("click", async (ev) => {
         const bt = ev.currentTarget;
@@ -2244,9 +2898,12 @@
           await recarregar();
           const atualizado = E.pedidos.find(x => x.id === p.id);
           const link = zap(perfilDe(p.solicitante).celular, mensagemPedido(atualizado, "enviada"));
-          abrir(`<div class="janela-topo"><div><h2>Leads enviados</h2><p>${prontos.length} leads já aparecem para ${esc(rotuloLongo(p.sigla))}.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
-            <div class="janela-corpo"><p>Avise o representante para ele começar os contatos.</p></div>
-            <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button>${link ? `<a class="btn btn-zap" href="${esc(link)}" target="_blank" rel="noopener">Avisar no WhatsApp</a>` : ""}</div>`);
+          const rep = perfilDe(p.solicitante);
+          abrir(`<div class="janela-topo"><div><h2>Leads enviados ✓</h2><p>${prontos.length} leads já aparecem para ${esc(rotuloLongo(p.sigla))}.</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+            <div class="janela-corpo"><p class="passo-final"><b>Último passo:</b> avise ${esc(primeiroNome(p.solicitante_nome) || "o representante")} para começar os contatos.${link ? " Ao tocar no botão, o portal marca o pedido como avisado." : ""}</p>
+              ${link ? `<a class="btn btn-zap btn-grande" href="${esc(link)}" target="_blank" rel="noopener" id="imp-avisar">Avisar ${esc(primeiroNome(p.solicitante_nome))} no WhatsApp</a>` : `<p class="sec">${esc(rep.nome || "O representante")} não tem celular cadastrado. Avise por outro canal.</p>`}</div>
+            <div class="janela-rodape"><button class="btn" data-fechar>${link ? "Avisar depois" : "Fechar"}</button></div>`,
+          (j2) => { const z = j2.querySelector("#imp-avisar"); if (z) z.addEventListener("click", () => marcarAviso(p.id, "avisado", () => fechar())); });
         } catch (e) { aviso(API.traduzir(e), true); }
       };
     };
@@ -2332,7 +2989,7 @@
       ? `Olá, ${primeiroNome(p.nome)}! Seu acesso ao Portal de Leads foi liberado. Entre em ${urlPortal()} com seu e-mail e a senha que você criou.`
       : `Olá, ${primeiroNome(p.nome)}! Recebemos seu cadastro no Portal de Leads e já estamos conferindo.`;
     return `
-      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>${ehAdmin() ? "Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar." : "Só administradores aprovam, mudam o acesso e excluem cadastros. Aqui você consulta quem tem acesso."}</p></div>
+      <div class="topo"><div><p class="sobrelinha">${sobre()}</p><h1>Cadastros</h1><p>${ehAdmin() ? "Confira se a sigla no começo do e-mail é da unidade da pessoa antes de aprovar. Para mudar senha, acesso ou excluir, use Gerenciar." : "Aqui você consulta quem tem acesso e chama a pessoa no WhatsApp. Só administradores aprovam, mudam o acesso e excluem cadastros."}</p></div>
         <div class="acoes"><button class="btn" data-acao="atualizar">Atualizar</button></div></div>
       ${ehAdmin() && donosSugeridos().length ? `<section class="bloco faixa-donos" style="margin-bottom:18px"><h2>${donosSugeridos().length} unidade${donosSugeridos().length > 1 ? "s" : ""} sem dono</h2>
         <p class="sub">O dono convida e libera os vendedores da unidade. Sugestão: o primeiro representante aprovado de cada uma.</p>
@@ -2359,7 +3016,7 @@
           const us = unidadesDe(p.id);
           const siglaOk = p.cargo !== "Representante" || API.siglaDoEmail(p.email) === p.siglaPrincipal;
           return `<tr>
-            <td><b>${esc(p.nome)}</b> <span class="etiqueta">${esc(p.cargo || "Representante")}</span><div class="sec">${esc(p.email)}</div></td>
+            <td><b>${esc(p.nome)}</b> <span class="etiqueta">${esc(p.cargo === "Executivo" ? nivelDe(p) : p.cargo || "Representante")}</span><div class="sec">${esc(p.email)}${p.cargo === "Executivo" && p.gestor_nome ? ` · responde a ${esc(primeiroNome(p.gestor_nome))}` : ""}</div></td>
             <td>${us.length ? us.map(a => { const u = unidadeInfo(a.sigla); const dono = u.dono_uid === p.id;
               const podeDono = ehAdmin() && !dono && !u.tipo && a.situacao === "aprovado" && p.situacao === "aprovado" && (p.papel || "representante") === "representante" && (p.cargo || "Representante") === "Representante";
               return `<div><b>${esc(u.nome || a.sigla)}</b>${a.principal ? "" : " (extra)"} ${dono ? `<span class="etiqueta dono">Dono</span> ` : ""}<span class="sec">${esc(u.cidade_uf || "")} · ${esc(u.regiao || "")}${a.situacao !== "aprovado" ? " · " + esc(a.situacao) : ""}</span>${podeDono ? ` <button class="link-mini" data-acao="tornarDono" data-id="${esc(p.id)}" data-sigla="${esc(a.sigla)}">Tornar dono</button>` : ""}</div>`; }).join("") : `<span class="sec">${p.papel === "time" || !p.siglaPrincipal ? "Time (sem unidade)" : "–"}</span>`}
@@ -2367,7 +3024,8 @@
               ${!siglaOk ? `<div class="sec" style="color:var(--danger)">A sigla não bate com o e-mail</div>` : ""}</td>
             <td>${esc(foneBonito(p.celular || ""))}</td>
             <td>${p.papel === "admin" ? "<b>Administrador</b><div class=\"sec\">Vê tudo e gerencia cadastros</div>" : p.papel === "time" ? "Time<div class=\"sec\">Vê e trabalha pedidos e leads</div>" : "Só as próprias unidades"}</td>
-            <td>${data(p.criadoEm)}${p.situacao === "excluido" ? `<div class="sec">Inativo desde ${p.excluido_em ? data(p.excluido_em) : "–"}${p.excluido_por ? " por " + esc(p.excluido_por) : ""}</div>` : ""}</td>
+            <td>${data(p.criadoEm)}${p.situacao === "pendente" ? `<div class="sec espera-quem">${(() => { const u = unidadeInfo(p.siglaPrincipal); const d = u.dono_uid && u.dono_uid !== p.id ? perfilDe(u.dono_uid) : null;
+              return `${d && d.nome ? `Aguardando o dono (${esc(primeiroNome(d.nome))}) ou o time` : "Aguardando o time"} · pediu ${dias(p.criadoEm) ? "há " + dias(p.criadoEm) + " dia(s)" : "hoje"}`; })()}</div>` : ""}${p.situacao === "excluido" ? `<div class="sec">Inativo desde ${p.excluido_em ? data(p.excluido_em) : "–"}${p.excluido_por ? " por " + esc(p.excluido_por) : ""}</div>` : ""}</td>
             <td><div class="acoes">
               ${!ehAdmin() ? (link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : `<span class="sec">–</span>`)
               : p.situacao === "excluido" ? `<button class="btn btn-p" data-acao="reativar" data-id="${esc(p.id)}">Reativar</button><button class="btn btn-p btn-perigo-leve" data-acao="excluirDeVez" data-id="${esc(p.id)}">Excluir de vez</button>` : `
@@ -2375,15 +3033,104 @@
                 ? `<button class="btn btn-p btn-primario" data-acao="aprovar" data-papel="time" data-id="${esc(p.id)}">Aprovar como time</button><button class="btn btn-p" data-acao="aprovar" data-papel="admin" data-id="${esc(p.id)}">Aprovar como administrador</button>`
                 : `<button class="btn btn-p btn-primario" data-acao="aprovar" data-id="${esc(p.id)}">Aprovar</button>`) : ""}
               ${p.situacao === "aprovado" && p.cargo === "Inside Sales" && (p.papel || "representante") === "representante" ? `<span class="etiqueta alerta">Falta liberar o acesso de time</span>` : ""}
-              ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">${p.situacao === "aprovado" ? "Bloquear" : "Recusar"}</button>` : ""}
-              ${p.situacao === "aprovado" && !eu ? ["representante", "time", "admin"].filter(x => x !== (p.papel || "representante")).map(x => `<button class="btn btn-p" data-acao="papel" data-papel="${x}" data-id="${esc(p.id)}">Tornar ${PAPEL[x].toLowerCase()}</button>`).join("") : ""}
-              ${p.situacao === "aprovado" && !eu ? `<button class="btn btn-p" data-acao="senha" data-id="${esc(p.id)}">Senha nova</button>` : ""}
+              ${p.situacao === "aprovado" ? `${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}<button class="btn btn-p" data-acao="gerenciar" data-id="${esc(p.id)}">Gerenciar</button>` : `
+              ${p.situacao !== "recusado" && !eu ? `<button class="btn btn-p btn-perigo" data-acao="recusar" data-id="${esc(p.id)}">Recusar</button>` : ""}
               <button class="btn btn-p" data-acao="editarPessoa" data-id="${esc(p.id)}">Editar dados</button>
               ${link ? `<a class="btn btn-p btn-zap" href="${esc(link)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
-              ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}
+              ${!eu ? `<button class="btn btn-p btn-perigo-leve" data-acao="excluir" data-id="${esc(p.id)}">Excluir cadastro</button>` : ""}`}`}
             </div></td></tr>`;
         }).join("")}</tbody></table></div>`
       : `<div class="vazio"><h2>${E.f.cadastro === "pendente" ? "Nenhum cadastro aguardando" : E.f.cadastro === "excluido" ? "Nenhum cadastro inativo" : "Nenhum cadastro aqui"}</h2><p>${E.f.cadastro === "pendente" ? "Quando um representante criar o acesso, ele aparece aqui para aprovação." : "Mude a aba para ver os outros cadastros."}</p></div>`}`;
+  }
+
+  // ---- Equipe comercial: gerente → coordenador → executivos ----
+  const NIVEIS = ["Executivo", "Coordenador", "Gerente"];
+  const nivelDe = (p) => (p && p.nivel) || "Executivo";
+  const execs = () => (E.perfis || []).filter(p => p.cargo === "Executivo" && p.situacao === "aprovado");
+  // Cadeia de quem a pessoa responde (direto e acima), sem repetir (protege de ciclos).
+  function cadeiaGestores(uid, mapa) {
+    const vistos = [], m = mapa || Object.fromEntries(execs().map(p => [p.id, p]));
+    let atual = m[uid];
+    while (atual && atual.gestor_uid && !vistos.includes(atual.gestor_uid) && atual.gestor_uid !== uid && vistos.length < 6) { vistos.push(atual.gestor_uid); atual = m[atual.gestor_uid]; }
+    return vistos;
+  }
+  // Quem pode ser gestor de "p": coordenadores e gerentes (gerente acima de coordenador), sem criar ciclo.
+  function opcoesGestor(p, nivel) {
+    const acima = nivel === "Coordenador" ? ["Gerente"] : nivel === "Gerente" ? [] : ["Coordenador", "Gerente"];
+    return execs().filter(x => x.id !== p.id && acima.includes(nivelDe(x)) && !cadeiaGestores(x.id).includes(p.id));
+  }
+  async function salvarEquipeComercial(p, nivel, gestorUid) {
+    const mapa = Object.fromEntries(execs().map(x => [x.id, { ...x }]));
+    const g = gestorUid ? mapa[gestorUid] : null;
+    mapa[p.id] = { ...(mapa[p.id] || p), nivel, gestor_uid: g ? g.id : null, gestor_nome: g ? g.nome : null };
+    // Cada carteira de executivo guarda quem a acompanha (as regras do banco usam isso para liberar a consulta).
+    const unidades = [];
+    Object.values(mapa).forEach(x => {
+      const sigla = x.siglaPrincipal; if (!sigla) return;
+      const u = E.unidades.find(y => y.sigla === sigla); if (!u || u.tipo !== "executivo") return;
+      const gestores = cadeiaGestores(x.id, mapa);
+      const info = { gestores, exec_nome: x.nome, exec_nivel: nivelDe(x), exec_gestor: x.gestor_nome || null };
+      if (JSON.stringify(u.gestores || []) !== JSON.stringify(gestores) || u.exec_nome !== info.exec_nome || u.exec_nivel !== info.exec_nivel || (u.exec_gestor || null) !== info.exec_gestor) unidades.push({ sigla, ...info });
+    });
+    await API.salvarEquipeComercial(p.id, { nivel, gestor_uid: mapa[p.id].gestor_uid, gestor_nome: mapa[p.id].gestor_nome }, unidades);
+  }
+  function blocoEquipeComercial(p) {
+    if (p.cargo !== "Executivo") return "";
+    const nivel = nivelDe(p), ops = opcoesGestor(p, nivel);
+    const subordinados = execs().filter(x => cadeiaGestores(x.id).includes(p.id));
+    return `<section class="equipe-comercial"><h3>Equipe comercial</h3>
+      <p class="sub">Define quem acompanha a carteira de quem. Coordenador e gerente veem, só para consulta, as carteiras de quem responde a eles.</p>
+      <div class="grade-2">
+        <div class="campo"><label for="g-nivel">Nível</label><select id="g-nivel">${NIVEIS.map(n => `<option${n === nivel ? " selected" : ""}>${n}</option>`).join("")}</select></div>
+        <div class="campo"><label for="g-gestor">Responde a</label><select id="g-gestor"><option value="">Ninguém</option>${ops.map(x => `<option value="${esc(x.id)}"${p.gestor_uid === x.id ? " selected" : ""}>${esc(x.nome)} (${esc(nivelDe(x))})</option>`).join("")}</select></div>
+      </div>
+      ${subordinados.length ? `<p class="sub">Acompanha hoje: ${esc(listaE(subordinados.map(x => primeiroNome(x.nome))))}.</p>` : ""}
+      <div class="erro-form" id="g-erro" hidden></div>
+      <button type="button" class="btn" id="g-salvar">Salvar equipe comercial</button></section>`;
+  }
+
+  // Gerenciar um cadastro aprovado: tudo agrupado numa janela, com o que é perigoso separado no fim.
+  function janelaGerenciar(id) {
+    const p = perfilDe(id);
+    if (!p || !p.id) return;
+    const eu = p.id === E.perfil.id;
+    const papel = p.papel || "representante";
+    const bt = (acao, txt, cls, extra) => `<button type="button" class="btn ${cls || ""}" data-g="${acao}" data-id="${esc(p.id)}"${extra || ""}>${txt}</button>`;
+    abrir(`
+      <div class="janela-topo"><div><h2>Gerenciar ${esc(p.nome)}</h2><p>${esc(p.email)}${p.celular ? " · " + esc(foneBonito(p.celular)) : ""}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
+      <div class="janela-corpo gerenciar">
+        <section><h3>Dados</h3><p class="sub">Nome, celular e unidades da pessoa.</p>${bt("editarPessoa", "Editar dados")}</section>
+        ${blocoEquipeComercial(p)}
+        ${eu ? "" : `<section><h3>Senha</h3><p class="sub">A pessoa esqueceu a senha? Gere um link para ela criar outra.</p>${bt("senha", "Senha nova")}</section>
+        <section><h3>Tipo de acesso</h3><p class="sub">Hoje: <b>${esc(PAPEL[papel])}</b>. ${papel === "admin" ? "Vê tudo e gerencia cadastros." : papel === "time" ? "Vê e trabalha pedidos e leads." : "Vê só as próprias unidades."}</p>
+          <div class="acoes">${["representante", "time", "admin"].filter(x => x !== papel).map(x => bt("papel", "Tornar " + PAPEL[x].toLowerCase(), "", ` data-papel="${x}"`)).join("")}</div></section>
+        <section class="zona-perigo"><h3>Zona de perigo</h3><p class="sub">Bloquear tira o acesso na hora. Excluir deixa o cadastro inativo (dá para reativar).</p>
+          <div class="acoes">${bt("recusar", "Bloquear acesso", "btn-perigo")}${bt("excluir", "Excluir cadastro", "btn-perigo-leve")}</div></section>`}
+      </div>
+      <div class="janela-rodape"><button class="btn" data-fechar>Fechar</button></div>`,
+    (j) => {
+      j.querySelectorAll("[data-g]").forEach(b => b.addEventListener("click", () => {
+        const fake = { dataset: { ...b.dataset, acao: b.dataset.g } };
+        fechar(); acoes[b.dataset.g](fake);
+      }));
+      const nv = j.querySelector("#g-nivel");
+      if (nv) {
+        const gs = j.querySelector("#g-gestor");
+        nv.addEventListener("change", () => {
+          const atual = gs.value, ops = opcoesGestor(p, nv.value);
+          gs.innerHTML = `<option value="">Ninguém</option>${ops.map(x => `<option value="${esc(x.id)}"${atual === x.id ? " selected" : ""}>${esc(x.nome)} (${esc(nivelDe(x))})</option>`).join("")}`;
+        });
+        j.querySelector("#g-salvar").addEventListener("click", async (ev) => {
+          const erro = j.querySelector("#g-erro");
+          try {
+            await ocupado(ev.currentTarget, () => salvarEquipeComercial(p, nv.value, gs.value));
+            await carregar(); desenhar(); janelaGerenciar(id);
+            const g = gs.value ? perfilDe(gs.value) : null;
+            aviso(`${primeiroNome(p.nome)}: ${nv.value}${g ? ", responde a " + primeiroNome(g.nome) : ""}.`);
+          } catch (e) { erro.textContent = API.traduzir(e); erro.hidden = false; }
+        });
+      }
+    });
   }
 
   // Celular: só números, com DDD (tira o 55 do Brasil se vier).
@@ -2444,8 +3191,15 @@
   function janelaCarteiras() {
     const c = E.carteiras || { regioes: {} }, pode = ehAdmin(), time = timeAprovado();
     const unid = (r) => new Set(E.unidades.filter(u => u.regiao === r).map(u => u.sigla)).size;
-    const sub = c.substituto || {};
+    const subs = substitutosDe(c);
     const op = (sel) => `<option value="">Livre: quem puxar</option>${time.map(x => `<option value="${esc(x.id)}"${sel === x.id ? " selected" : ""}>${esc(x.nome)}</option>`).join("")}`;
+    const regioesDe = (uid) => L.regioes.filter(r => ((c.regioes || {})[r] || {}).uid === uid);
+    const linhaSub = (x) => { const s = subs[x.id] || {}, vencido = s.ate && s.ate < hojeISO();
+      return `<tr><td><b>${esc(x.nome)}</b><div class="sec">${esc(listaE(regioesDe(x.id)) || "Sem região fixa")}</div></td>
+        <td>${pode ? `<select data-sub-de="${esc(x.id)}" aria-label="Quem cobre ${esc(x.nome)}"><option value="">Ninguém</option>${time.filter(y => y.id !== x.id).map(y => `<option value="${esc(y.id)}"${!vencido && s.para && s.para.uid === y.id ? " selected" : ""}>${esc(y.nome)}</option>`).join("")}</select>`
+          : esc(!vencido && s.para ? s.para.nome : "–")}</td>
+        <td>${pode ? `<input type="date" data-sub-ate="${esc(x.id)}" min="${hojeISO()}" value="${esc(!vencido ? s.ate || "" : "")}" aria-label="Até quando ${esc(x.nome)} fica fora">` : esc(!vencido && s.ate ? data(s.ate) : "–")}</td></tr>`; };
+    const fora = time.filter(x => substitutoAtivo(c, x.id));
     abrir(`
       <div class="janela-topo"><div><h2>Carteiras do time</h2><p>Quem cuida de cada região.${pode ? "" : " Só administradores mudam."}</p></div><button class="fechar" data-fechar aria-label="Fechar">×</button></div>
       <div class="janela-corpo">
@@ -2453,13 +3207,10 @@
         ${L.regioes.map(r => { const atual = (c.regioes || {})[r]; return `<tr class="${atual ? "" : "livre"}"><td><b>${esc(r)}</b></td><td>${unid(r)}</td>
           <td>${pode ? `<select data-regiao="${esc(r)}" aria-label="Responsável por ${esc(r)}">${op(atual && atual.uid)}</select>` : esc(atual ? atual.nome : "Livre: quem puxar")}</td></tr>`; }).join("")}
         </tbody></table></div>
-        <fieldset class="extra" style="margin-top:14px"><legend>Substituto nas férias ou ausência</legend>
-          ${pode ? `<div class="grade-3">
-            <div class="campo"><label for="s-de">Quem sai</label><select id="s-de"><option value="">Ninguém</option>${time.map(x => `<option value="${esc(x.id)}"${sub.de === x.id ? " selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div>
-            <div class="campo"><label for="s-para">Quem cobre</label><select id="s-para"><option value="">Escolha</option>${time.map(x => `<option value="${esc(x.id)}"${sub.para && sub.para.uid === x.id ? " selected" : ""}>${esc(x.nome)}</option>`).join("")}</select></div>
-            <div class="campo"><label for="s-ate">Até</label><input id="s-ate" type="date" value="${esc(sub.ate || "")}"></div></div>
-            <p class="sub">No período, os pedidos novos das regiões de quem sai vão para quem cobre. Depois voltam sozinhos.</p>`
-          : `<p class="sub">${sub.de ? `${esc((time.find(x => x.id === sub.de) || {}).nome || "")} está sendo coberto por ${esc(sub.para ? sub.para.nome : "")}${sub.ate ? " até " + data(sub.ate) : ""}.` : "Ninguém em férias ou ausência."}</p>`}
+        <fieldset class="extra" style="margin-top:14px"><legend>Férias e ausências</legend>
+          <p class="sub">${pode ? "Cada pessoa pode ter o seu substituto e a sua data. Duas pessoas podem estar fora ao mesmo tempo." : fora.length ? fora.map(x => { const s = substitutoAtivo(c, x.id); return `${esc(x.nome)} está sendo coberto por ${esc(s.para.nome)}${s.ate ? " até " + data(s.ate) : ""}.`; }).join(" ") : "Ninguém em férias ou ausência."}</p>
+          ${pode ? `<div class="tabela-wrap"><table class="tabela-subs"><thead><tr><th>Pessoa do time</th><th>Quem cobre</th><th>Até</th></tr></thead><tbody>${time.map(linhaSub).join("")}</tbody></table></div>
+            <p class="sub">No período, os pedidos novos das regiões de quem sai vão para quem cobre. Depois voltam sozinhos.</p>` : ""}
         </fieldset>
         <p class="sub">Pedidos que já têm dono não mudam; só os novos seguem a carteira. Quando alguém novo entrar no time, aprove como Time e escolha as regiões dele aqui.</p>
         <div class="erro-form" id="s-erro" hidden></div>
@@ -2469,16 +3220,25 @@
       const ok = j.querySelector("#s-ok"); if (!ok) return;
       ok.addEventListener("click", async (ev) => {
         const bt = ev.currentTarget, erro = j.querySelector("#s-erro");
+        const falha = (t) => { erro.textContent = t; erro.hidden = false; };
         const pessoa = (id) => { const x = time.find(y => y.id === id); return x ? { uid: x.id, nome: x.nome, celular: x.celular || null } : null; };
         const regioes = Object.fromEntries(L.regioes.map(r => [r, pessoa(j.querySelector(`[data-regiao="${r}"]`).value)]));
-        const de = j.querySelector("#s-de").value, para = j.querySelector("#s-para").value, ate = j.querySelector("#s-ate").value;
-        if (de && (!para || para === de)) { erro.textContent = "Escolha quem cobre (outra pessoa)."; erro.hidden = false; return; }
-        if (de && !ate) { erro.textContent = "Escolha até quando vale a substituição."; erro.hidden = false; return; }
-        const substituto = de ? { de, para: pessoa(para), ate } : null;
+        const substitutos = {};
+        for (const x of time) {
+          const para = j.querySelector(`[data-sub-de="${x.id}"]`).value, ate = j.querySelector(`[data-sub-ate="${x.id}"]`).value;
+          if (!para) continue;
+          if (!ate) return falha(`Escolha até quando ${primeiroNome(x.nome)} fica fora.`);
+          if (ate < hojeISO()) return falha(`A data de ${primeiroNome(x.nome)} já passou. Escolha hoje ou uma data futura.`);
+          substitutos[x.id] = { para: pessoa(para), ate };
+        }
+        // Quem cobre não pode estar fora no mesmo dia.
+        const cobreFora = Object.entries(substitutos).find(([, v]) => substitutos[v.para.uid]);
+        if (cobreFora) return falha(`${primeiroNome(pessoa(cobreFora[0]).nome)} ficaria com ${primeiroNome(cobreFora[1].para.nome)}, que também está fora. Escolha outra pessoa para cobrir.`);
         const resumo = L.regioes.map(r => `${esc(r)}: ${esc(regioes[r] ? regioes[r].nome : "livre")}`).join(" · ");
-        if (!(await confirmar({ titulo: "Salvar as carteiras do time?", texto: resumo + (substituto ? `. ${esc(pessoa(de).nome)} coberto por ${esc(substituto.para.nome)} até ${data(ate)}.` : "."), botao: "Salvar carteiras" }))) return;
-        try { await ocupado(bt, () => API.salvarCarteiras({ regioes, substituto })); fechar(); await recarregar(); aviso("Carteiras salvas."); }
-        catch (e) { erro.textContent = API.traduzir(e); erro.hidden = false; }
+        const resumoSub = Object.entries(substitutos).map(([de, v]) => `${esc(primeiroNome(pessoa(de).nome))} coberto por ${esc(primeiroNome(v.para.nome))} até ${data(v.ate)}`).join("; ");
+        if (!(await confirmar({ titulo: "Salvar as carteiras do time?", texto: resumo + (resumoSub ? `. ${resumoSub}.` : "."), botao: "Salvar carteiras" }))) return;
+        try { await ocupado(bt, () => API.salvarCarteiras({ regioes, substitutos })); fechar(); await recarregar(); aviso("Carteiras salvas."); }
+        catch (e) { falha(API.traduzir(e)); }
       });
     });
   }
@@ -2637,6 +3397,56 @@
       </div>`;
   }
 
+  // ---- Conversão por segmento ----
+  // Cada lead conta para o segmento do pedido: o do próprio lead, se for um dos pedidos; se o pedido tinha um segmento só, esse.
+  const NEGOCIO = ["Em negociação", "Em implantação", "Embarque iniciado", "Cliente Azul"];
+  const EMBARQUE = ["Embarque iniciado", "Cliente Azul"];
+  function segmentoDoLead(l) {
+    const p = pedidoDe(l) || {}, segs = p.segmentos || [];
+    return segs.find(sg => norm(sg) === norm(l.segmento)) || (segs.length === 1 ? segs[0] : "") || l.segmento || "Sem segmento";
+  }
+  // { "Sudeste": { "Confecções": { e: enviados, n: negociação ou depois, b: embarques } } }
+  function resumoSegmentos(leads) {
+    const r = {};
+    leads.forEach(l => {
+      const reg = (pedidoDe(l) || {}).regiao || "Sem região", sg = segmentoDoLead(l);
+      const o = ((r[reg] = r[reg] || {})[sg] = r[reg][sg] || { e: 0, n: 0, b: 0 });
+      o.e++; if (NEGOCIO.includes(l.status)) o.n++; if (EMBARQUE.includes(l.status)) o.b++;
+    });
+    return r;
+  }
+  // Sugestões do pedido: segmentos da lista oficial que mais viraram negócio na região (dados que o administrador publica).
+  function segmentosSugeridos(regiao) {
+    const d = ((E.segmentosRegiao || {}).regioes || {})[regiao] || {};
+    return Object.entries(d).map(([seg, o]) => ({ seg, e: o.e || 0, n: o.n || 0, b: o.b || 0 }))
+      .filter(x => L.segmentos.includes(x.seg) && (x.n || x.b))
+      .sort((a, b) => b.b - a.b || b.n - a.n || (b.n / b.e) - (a.n / a.e)).slice(0, 5);
+  }
+  // Administrador: publica o resumo por região e segmento (só números, sem empresas), uma vez por sessão, se mudou.
+  async function publicarSegmentos() {
+    const regioes = resumoSegmentos(E.leads);
+    const atual = JSON.stringify(((E.segmentosRegiao || {}).regioes) || {});
+    if (JSON.stringify(regioes) === atual) return;
+    try { await API.salvarSegmentos(regioes); E.segmentosRegiao = { regioes }; } catch (e) { /* só ajuda as sugestões: se falhar, tenta na próxima sessão */ }
+  }
+  function blocoSegmentos(leads, reg) {
+    const r = resumoSegmentos(leads);
+    const linhas = [];
+    Object.entries(r).forEach(([regiao, segs]) => Object.entries(segs).forEach(([seg, o]) => linhas.push({ regiao, seg, ...o })));
+    linhas.sort((a, b) => b.b - a.b || b.n - a.n || b.e - a.e);
+    const pct = (x, t) => t ? Math.round((x / t) * 100) + "%" : "–";
+    const linha = (o) => `<tr><td><b>${esc(o.seg)}</b></td>${reg ? "" : `<td>${esc(o.regiao)}</td>`}<td>${o.e}</td><td>${o.n} <span class="sec">(${pct(o.n, o.e)})</span></td><td${o.b ? ' style="color:var(--ok,#1E7A3D);font-weight:600"' : ""}>${o.b} <span class="sec">(${pct(o.b, o.e)})</span></td></tr>`;
+    const cab = `<thead><tr><th>Segmento</th>${reg ? "" : "<th>Região</th>"}<th>Leads enviados</th><th>Viraram negociação</th><th>Embarques</th></tr></thead>`;
+    const MOSTRA = 10;
+    return `<section class="bloco" style="padding:0;overflow:hidden">
+        <h2 style="padding:18px 20px 0">Conversão por segmento${reg ? " · " + esc(reg) : " e região"}</h2>
+        <p class="sub" style="padding:0 20px">Quais segmentos viram negociação e embarque. Os melhores aparecem como sugestão quando a unidade pede uma base.</p>
+        ${linhas.length ? `<div class="tabela-wrap" style="border:0;border-radius:0"><table>${cab}<tbody>${linhas.slice(0, MOSTRA).map(linha).join("")}</tbody></table></div>
+          ${linhas.length > MOSTRA ? `<details class="mais-linhas"><summary>Ver os outros ${linhas.length - MOSTRA}</summary><div class="tabela-wrap" style="border:0;border-radius:0"><table>${cab}<tbody>${linhas.slice(MOSTRA).map(linha).join("")}</tbody></table></div></details>` : ""}`
+        : `<p class="sub" style="padding:0 20px 18px;color:var(--muted)">Nenhum lead enviado ainda.</p>`}
+      </section>`;
+  }
+
   function telaPainel() {
     const reg = E.f.regiao;
     const pedidos = E.pedidos.filter(p => !reg || p.regiao === reg);
@@ -2671,6 +3481,7 @@
         <section class="bloco"><h2>Pedidos por região</h2>${barras(regioesVisiveis().map(r => [r, E.pedidos.filter(p => p.regiao === r && (!reg || r === reg)).length]))}</section>
       </div>
       ${blocoProspeccao(leads)}
+      ${blocoSegmentos(leads, reg)}
       <section class="bloco" style="padding:0;overflow:hidden">
         <h2 style="padding:18px 20px 0">Por unidade</h2>
         ${lojas.length ? `<div class="tabela-wrap" style="border:0;border-radius:0"><table>
@@ -2691,9 +3502,8 @@
       if (!f) return;
       f.addEventListener("submit", async (ev) => {
         ev.preventDefault();
-        const a = document.getElementById("n-senha").value, b = document.getElementById("n-senha2").value;
+        const a = document.getElementById("n-senha").value;
         if (a.length < 8) return aviso("A senha precisa ter pelo menos 8 caracteres.", true);
-        if (a !== b) return aviso("As senhas não são iguais.", true);
         if (!(await confirmar({ titulo: "Trocar a sua senha?", texto: "Na próxima vez, entre com a senha nova.", botao: "Trocar senha" }))) return;
         try { await ocupado(f.querySelector("button"), () => API.trocarSenha(a)); f.reset(); aviso("Senha alterada."); }
         catch (e) { aviso(API.traduzir(e), true); }
@@ -2716,10 +3526,16 @@
             </tbody></table></div>
             ${us.length < MAX_UNID ? `<button class="btn" style="margin-top:12px" data-acao="pedirUnidade">+ Pedir acesso a outra unidade</button>` : ""}` : ""}
         </section>
+        <section class="bloco instalar" id="bloco-instalar"><h2>Colocar o portal na tela do celular</h2>
+          <p class="sub">Fica um ícone igual ao de um aplicativo. Um toque e o portal abre, sem procurar o link.</p>
+          ${instalarPrompt ? `<button class="btn btn-primario" data-acao="instalar">Colocar na tela agora</button>` : ""}
+          <div class="instalar-passos">
+            <div><h3>Android (Chrome)</h3><ol><li>Abra o portal no Chrome.</li><li>Toque nos <b>três pontinhos</b> no alto, à direita.</li><li>Toque em <b>Adicionar à tela inicial</b> (ou <b>Instalar app</b>).</li><li>Confirme em <b>Adicionar</b>.</li></ol></div>
+            <div><h3>iPhone (Safari)</h3><ol><li>Abra o portal no Safari.</li><li>Toque no botão <b>Compartilhar</b> (o quadrado com a seta para cima).</li><li>Role e toque em <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>.</li></ol></div>
+          </div></section>
         <section class="bloco"><h2>Trocar senha</h2>
           <form id="f-senha">
-            <div class="campo"><label for="n-senha">Nova senha</label><input id="n-senha" type="password" autocomplete="new-password" minlength="8" required><span class="dica">Mínimo de 8 caracteres. Não use a senha da sua conta Azul.</span></div>
-            <div class="campo"><label for="n-senha2">Repita a nova senha</label><input id="n-senha2" type="password" autocomplete="new-password" required></div>
+            <div class="campo"><label for="n-senha">Nova senha</label><input id="n-senha" type="password" autocomplete="new-password" minlength="8" required><span class="dica">Mínimo de 8 caracteres. Não use a senha da sua conta Azul. Use “Mostrar” para conferir o que digitou.</span></div>
             <button class="btn btn-primario" type="submit">Trocar senha</button>
           </form></section>
       </div>`;
@@ -2728,7 +3544,7 @@
   // ------------------------------------------------------------------
   // Tour de primeiro acesso: um roteiro curto para cada perfil
   // ------------------------------------------------------------------
-  const TOUR_VERSAO = "1";
+  const TOUR_VERSAO = "2";
   const chaveTour = () => `portal-tour-${TOUR_VERSAO}-${E.perfil && E.perfil.id}`;
   const tourVisto = () => { try { return !!localStorage.getItem(chaveTour()); } catch (e) { return true; } };
   const marcarTourVisto = () => { try { localStorage.setItem(chaveTour(), new Date().toISOString()); } catch (e) { /* sem armazenamento */ } };
@@ -2739,19 +3555,20 @@
       const dono = unidadesDono().length > 0;
       return [
         { titulo: `Olá, ${nome}! Boas-vindas ao ${cfg.nomeDoPortal || "Portal de Leads"}`, texto: `Em menos de um minuto mostramos onde fica cada coisa. Dá para rever este tour quando quiser em Minha conta.` },
-        { tela: "leads", alvo: nav("leads"), titulo: "Meus leads", texto: "Aqui ficam os leads da sua unidade. O número amarelo mostra quantos contatos estão marcados para hoje." },
+        { tela: "leads", alvo: nav("leads"), titulo: "Meus leads", texto: `Aqui ficam os leads da ${suaU()}. O número amarelo mostra quantos contatos estão marcados para hoje.` },
         { tela: "leads", alvo: "section.base, .vazio [data-acao=novoPedido]", titulo: "Pedir uma base", texto: `Cada pedido traz até ${MAX} leads, com até 3 segmentos e 3 cidades. Para pedir a próxima base, tire todos os leads de Novo e Prospecção.` },
-        { tela: "leads", alvo: "section.hoje", titulo: "Para hoje", texto: "Os retornos que você marcou para hoje aparecem aqui, com WhatsApp e ligação a um clique. Se não der hoje, use Adiar." },
-        { tela: "leads", alvo: ".quadro, .tabela-wrap", titulo: "Seus leads por status", texto: "Arraste o cartão para mudar o status, ou clique nele para abrir a ficha com telefones, e-mails, próximo contato e histórico. Na ficha, marque ✓ ou ✕ em cada contato." },
-        { tela: "pedidos", alvo: nav("pedidos"), titulo: "Meus pedidos", texto: `Acompanhe cada pedido: Nova, Em extração, Enviada e Concluída. Aqui também aparece quem do ${TIME} cuida da sua unidade, com o WhatsApp.` },
+        { tela: "leads", alvo: "section.hoje", titulo: "Para hoje", texto: `Os retornos marcados para hoje aparecem aqui, com WhatsApp e ligação a um toque. Se não der hoje, use Adiar.${temEquipe((unidade() || {}).sigla) ? " Em “Meus” ficam os leads que você cuida; em “Da unidade”, os de todo mundo." : ""}` },
+        { tela: "leads", alvo: ".quadro, .tabela-wrap", titulo: "Seus leads por status", texto: `${ehCelular() ? "Toque no lead" : "Clique no cartão"} para abrir a ficha com telefones, e-mails, próximo contato e histórico. Depois de cada WhatsApp, ligação ou e-mail, o portal pergunta “Como foi?”: duas respostas e pronto, tudo fica salvo.` },
+        { tela: "pedidos", alvo: nav("pedidos"), titulo: "Meus pedidos", texto: `Acompanhe cada pedido: Recebido pelo time, Separando seus leads, Seus leads chegaram e Pedido fechado. Aqui também aparece quem do ${TIME} cuida da ${suaU()}, com o WhatsApp.` },
         ...(dono ? [{ tela: "equipe", alvo: nav("equipe"), titulo: "Minha equipe", texto: "Você é o dono da unidade. Convide seus vendedores por um link no WhatsApp e libere quem pedir acesso. Todos da equipe pedem e trabalham os leads." }] : []),
-        { tela: "conta", alvo: nav("conta"), titulo: "Minha conta", texto: "Altere seu celular e sua senha, peça acesso a outra unidade e reveja este tour." },
+        { tela: "conta", alvo: nav("conta"), titulo: "Minha conta", texto: "Altere seu celular e sua senha, peça acesso a outra unidade, coloque o portal na tela do celular e reveja este tour." },
         { titulo: "Pronto!", texto: `Qualquer dúvida, chame o time de ${TIME} pelo WhatsApp em Meus pedidos. Bom trabalho!`, fim: true }
       ];
     }
     const admin = ehAdmin();
     return [
       { titulo: `Olá, ${nome}! Boas-vindas ao ${cfg.nomeDoPortal || "Portal de Leads"}`, texto: `Você entrou como ${admin ? "administrador" : "time de " + TIME}. Em menos de um minuto mostramos onde fica cada coisa.` },
+      { tela: "hoje", alvo: nav("hoje"), titulo: "Hoje", texto: "Sua lista do dia, em ordem: pedidos para importar, leads enviados sem aviso e unidades para cobrar. O WhatsApp já vem com a mensagem pronta, e o portal registra que você avisou ou cobrou." },
       { tela: "pedidos", alvo: nav("pedidos"), titulo: "Pedidos", texto: "Os pedidos de base das unidades. O número mostra os pedidos novos da sua carteira e das regiões livres." },
       { tela: "pedidos", alvo: '[data-pilula="carteira"]', alvoGrupo: true, titulo: "Minha carteira, Livres e Todas", texto: "Minha carteira tem as regiões que são suas. Em Livres ficam as regiões sem responsável: quem puxar fica com o pedido. Pedido livre parado há mais de 1 dia útil ganha um aviso." },
       { tela: "pedidos", alvo: "[data-acao=carteiras]", titulo: "Carteiras do time", texto: admin ? "Escolha quem cuida de cada região e quem cobre férias e ausências." : "Veja quem cuida de cada região e quem está cobrindo férias." },
@@ -2859,7 +3676,7 @@
       if (!m || m[1] === VERSAO) return;
       const recarregar = () => location.replace(location.pathname + "?v=" + encodeURIComponent(m[1]));
       if (!$janela.open) return recarregar();
-      const t = document.getElementById("toast");
+      const t = $toast; if (!t.isConnected) document.body.appendChild(t);
       t.innerHTML = `Há uma versão nova do portal. <button class="link-mini" id="b-versao">Atualizar agora</button>`;
       clearTimeout(toastTimer); t.className = "toast ver";
       document.getElementById("b-versao").onclick = recarregar;

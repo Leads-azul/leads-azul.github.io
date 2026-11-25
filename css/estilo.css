@@ -654,3 +654,158 @@ tr.vencido td { color: var(--muted); }
 .selo-barrado { display: inline-block; background: #FDECEC; color: #B42318; border-radius: 999px; padding: 3px 10px; font-size: 12px; font-weight: 600; }
 .realce { animation: realce 1.6s ease-out; border-radius: 10px; }
 @keyframes realce { 0%, 40% { box-shadow: 0 0 0 3px rgba(209, 67, 67, .55); } 100% { box-shadow: 0 0 0 3px rgba(209, 67, 67, 0); } }
+
+/* ===== Onda 1 da auditoria de UX (2026-11) ===== */
+/* Mostrar a senha */
+.senha-caixa { position: relative; display: block; }
+.senha-caixa input { width: 100%; padding-right: 92px; }
+.senha-olho { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: var(--canvas); color: var(--blue-700); font: inherit; font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 8px; cursor: pointer; min-height: 32px; }
+.senha-olho:hover, .senha-olho:focus-visible { background: var(--blue-50); }
+/* "Eu sou": as outras opções aparecem só para quem não é representante */
+.link-pequeno { font-size: 13px; margin-top: 8px; }
+/* ✓ Funciona / ✕ Não funciona com palavra */
+.marca-b { width: auto; padding: 0 10px; white-space: nowrap; font-size: 13px; font-weight: 500; }
+@media (max-width: 640px) { .marca-b { width: auto; height: 40px; } }
+/* Pergunta com três caminhos (Salvar antes de sair?) */
+.cf-escolhas { flex-wrap: wrap; }
+/* Aviso do filtro "leads que faltam" */
+.aviso-filtro { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; background: #FFF6E0; border: 1px solid #F0D58A; color: #5E4300; border-radius: 10px; padding: 10px 14px; margin: 0 0 14px; font-size: 14px; }
+/* Tela de espera: falar com o time */
+.espera-contato { margin: 4px 0 14px; display: grid; gap: 10px; justify-items: center; }
+.espera-contato .sub { margin: 0; }
+/* "Ligar" no computador: número grande para ligar de outro aparelho */
+.ligar-pc { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 8px 0 16px; display: grid; gap: 6px; background: #fff; }
+.ligar-numero { font-size: 24px; letter-spacing: .02em; }
+.ligar-pc .acoes { justify-content: flex-end; }
+.dica-solta { font-size: 12px; color: var(--muted); margin: -6px 0 14px; }
+
+/* ===== Onda 2 da auditoria de UX (2026-11) ===== */
+/* Aviso com "Desfazer" */
+.toast { display: flex; align-items: center; gap: 12px; }
+.toast-desfazer { color: #9DD1FF; background: none; border: 0; font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer; padding: 6px 4px; min-height: 36px; }
+.etiqueta.ok { background: #E7F6EC; color: #1E7A3D; }
+.dica-ok { color: #1E7A3D; }
+.msg-previa { white-space: pre-wrap; font: inherit; font-size: 14px; background: var(--canvas); border-radius: 10px; padding: 12px; margin: 10px 0 14px; }
+.btn-grande { width: 100%; justify-content: center; min-height: 52px; font-size: 16px; margin-top: 8px; }
+.passo-final { font-size: 15px; line-height: 1.5; }
+
+/* "Como foi?" e "Quando volto?" */
+.comofoi { border: 2px solid var(--blue); background: var(--blue-50); border-radius: var(--radius); padding: 14px 16px 10px; margin: 0 0 16px; }
+.cf-registrado { margin: 0 0 8px; color: #1E7A3D; font-weight: 600; font-size: 14px; }
+.cf-pergunta { margin: 0 0 10px; font-size: 18px; font-weight: 600; color: var(--navy); }
+.cf-opcoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.cf-op { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 2px; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 12px 14px; min-height: 52px; font: inherit; font-size: 15px; font-weight: 500; color: var(--ink); cursor: pointer; }
+.cf-op small { color: var(--muted); font-weight: 400; font-size: 12.5px; }
+.cf-op:hover, .cf-op:focus-visible { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(21, 96, 212, .15); }
+.cf-op[aria-pressed=true] { background: var(--blue); border-color: var(--blue); color: #fff; }
+.cf-op:disabled { opacity: .6; cursor: wait; }
+.cf-linha { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.cf-linha input { flex: 1 1 180px; min-height: 44px; }
+.comofoi #cf-pular { display: block; margin-top: 10px; }
+
+/* Quem cuida do lead */
+.cuida-linha { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; background: var(--canvas); border-radius: 12px; padding: 10px 12px; margin: 0 0 14px; font-size: 14px; }
+
+/* Tela Hoje do time */
+.tarefas { margin-bottom: 18px; }
+.tarefas-topo { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tarefas-topo h2 { margin: 0; }
+.lista-tarefas { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
+.tarefa { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: #fff; }
+.tarefa-txt { display: grid; gap: 2px; min-width: 0; }
+.tarefa-acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+.tarefa-ok { color: #1E7A3D; margin: 8px 0 0; font-weight: 500; }
+
+/* Gerenciar cadastro */
+.gerenciar section { border-bottom: 1px solid var(--line); padding: 4px 0 14px; margin-bottom: 12px; }
+.gerenciar section:last-child { border-bottom: 0; }
+.gerenciar h3 { margin: 0 0 2px; font-size: 15px; }
+.gerenciar .zona-perigo { background: #FFF5F5; border: 1px solid #F5C2C2; border-radius: 12px; padding: 12px 14px; }
+.espera-quem { color: #8A5A00; }
+
+/* Colocar o portal na tela do celular */
+.instalar-passos { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; }
+.instalar-passos h3 { font-size: 14px; margin: 0 0 4px; }
+.instalar-passos ol { margin: 0; padding-left: 20px; line-height: 1.6; font-size: 14px; }
+
+/* Menu com ícones */
+.nav button { justify-content: flex-start; }
+.nav .nav-icone { display: inline-grid; place-items: center; opacity: .9; }
+.nav .contador { margin-left: auto; }
+.nav .nav-curto { display: none; }
+
+/* ---------- Celular primeiro ---------- */
+@media (max-width: 720px) {
+  body { font-size: 16px; }
+  .btn, .principal input:not([type=checkbox]):not([type=radio]), .principal select, #janela input:not([type=checkbox]):not([type=radio]), #janela select { min-height: 44px; }
+  .btn-p { min-height: 44px; padding-left: 14px; padding-right: 14px; }
+  .pilulas button { min-height: 40px; }
+  .sobrelinha { display: none; }
+  .topo h1 { font-size: 21px; }
+  .topo p { font-size: 14.5px; }
+  .instalar-passos { grid-template-columns: 1fr; }
+
+  /* Cabeçalho enxuto e menu fixo embaixo, com ícones, ao alcance do polegar */
+  .lateral { padding: 10px 14px 8px; }
+  .lateral .marca { padding: 0 0 6px; border-bottom: 0; }
+  .lateral .marca small { display: none; }
+  .quem { margin-top: 0; padding: 6px 0 0; border-top: 1px solid rgba(255, 255, 255, .12); }
+  .quem .nome { font-size: 13px; }
+  .nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; margin: 0;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 0; overflow: visible;
+    background: var(--navy); padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); box-shadow: 0 -4px 16px rgba(0, 0, 0, .18);
+  }
+  .nav button { position: relative; flex-direction: column; justify-content: center; gap: 2px; padding: 6px 2px; min-height: 56px; border-radius: 10px; font-size: 11.5px; text-align: center; }
+  .nav button[aria-current=page] { background: rgba(255, 255, 255, .16); color: #fff; }
+  .nav .nav-longo { display: none; }
+  .nav .nav-curto { display: block; white-space: nowrap; }
+  .nav .contador { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; font-size: 11px; padding: 0 6px; }
+  .principal { padding-bottom: 104px; }
+  .toast { bottom: 88px; }
+
+  /* Tabelas viram cartões */
+  table.tabela-cartoes:not(.lista-leads) thead { display: none; }
+  table.tabela-cartoes:not(.lista-leads), table.tabela-cartoes:not(.lista-leads) tbody, table.tabela-cartoes:not(.lista-leads) tr, table.tabela-cartoes:not(.lista-leads) td { display: block; width: 100%; }
+  table.tabela-cartoes:not(.lista-leads) tr { border-bottom: 1px solid var(--line); padding: 12px 14px; }
+  table.tabela-cartoes:not(.lista-leads) td { border: 0; padding: 3px 0; }
+  table.tabela-cartoes:not(.lista-leads) td[data-rotulo]::before { content: attr(data-rotulo); display: block; color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .03em; }
+  table.tabela-cartoes:not(.lista-leads) td:first-child::before { display: none; }
+  table.tabela-cartoes:not(.lista-leads) td:first-child { font-size: 15.5px; }
+  .tabela-wrap { overflow: visible; }
+
+  .cf-opcoes { grid-template-columns: 1fr; }
+  .tarefa-acoes { width: 100%; }
+  .tarefa-acoes .btn { flex: 1 1 auto; justify-content: center; }
+  .cuida-linha .btn { width: 100%; justify-content: center; }
+}
+.aviso-selo { margin-top: 6px; display: grid; gap: 2px; justify-items: start; }
+.aviso-selo .etiqueta { white-space: nowrap; }
+
+/* ===== Onda 3 da auditoria de UX (2026-11) ===== */
+/* Cidades: autocompletar */
+.cidade-wrap { position: relative; display: block; min-width: 0; }
+.cidade-wrap > input { width: 100%; }
+.lista-cidades { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 220px; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(10, 35, 87, .14); max-height: 280px; overflow: auto; }
+.lista-cidades button { display: flex; align-items: baseline; gap: 2px; width: 100%; text-align: left; font: inherit; font-size: 14.5px; background: none; border: 0; padding: 9px 12px; min-height: 40px; cursor: pointer; color: var(--ink); }
+.lista-cidades button small { color: var(--muted); font-size: 13px; }
+.lista-cidades button:hover, .lista-cidades button.ativo { background: var(--blue-50); }
+/* Segmentos sugeridos no pedido */
+.seg-sugeridos { margin-top: 10px; background: var(--canvas); border-radius: 12px; padding: 10px 12px; }
+.seg-sugeridos .sug-titulo { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--navy); }
+.seg-sugeridos .sug-lista { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg-sugeridos .sug { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 7px 11px; font: inherit; font-size: 14px; font-weight: 500; color: var(--ink); cursor: pointer; text-align: left; }
+.seg-sugeridos .sug small { color: #1E7A3D; font-size: 12px; font-weight: 500; }
+.seg-sugeridos .sug:hover, .seg-sugeridos .sug:focus-visible { border-color: var(--blue); }
+/* Painel: mais linhas */
+.mais-linhas summary { cursor: pointer; padding: 12px 20px; color: var(--blue); font-weight: 500; font-size: 14px; }
+/* Equipe comercial e quem pede a base */
+.gerenciar .equipe-comercial .grade-2 { margin-top: 6px; }
+.quem-pede .pilulas { margin-top: 8px; }
+.so-dono { margin: 0; font-size: 14px; color: var(--muted); max-width: 220px; }
+.tabela-subs select, .tabela-subs input { min-width: 0; width: 100%; }
+.tabela-subs td:first-child { width: 34%; }
+@media (max-width: 720px) {
+  .lista-cidades button { min-height: 44px; font-size: 16px; }
+  .seg-sugeridos .sug { min-height: 44px; }
+}
