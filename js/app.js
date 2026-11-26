@@ -231,19 +231,45 @@
   const $conf = document.createElement("dialog");
   $conf.className = "confirmar"; $conf.setAttribute("aria-labelledby", "cf-titulo");
   document.body.appendChild($conf);
-  const semAnimacao = () => window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // O avião sempre voa, em qualquer aparelho (decisão do time: vale também para quem pediu "reduzir movimento").
   const AVIAO = `<svg viewBox="0 0 40 40" aria-hidden="true"><path d="M3 21.5 L37 20 Q39 20 37 21.6 L3 23 Z" fill="#12306F"/><path d="M16 21.2 L9 32 L13 32 L24 21.4 Z" fill="#1661D8"/><path d="M16 21.4 L9 9.5 L13 9.5 L24 21 Z" fill="#1661D8"/><path d="M3.5 21.6 L1 15.5 L4 15.5 L8 21.4 Z" fill="#1661D8"/></svg>`;
-  function voar(botao) {
-    if (semAnimacao() || !botao.animate) return 0;
-    const r = botao.getBoundingClientRect(), x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
-    const x1 = Math.min(window.innerWidth + 60, x0 + 300), y1 = -70;
+  // Celular e tablet: tela de toque ou estreita. Lá o avião sobe quase reto até o topo, para dar tempo de ver o voo.
+  const vooDeToque = () => (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || window.innerWidth < 820;
+  // voar(botão ou posição, onde desenhar): o avião sai do botão e sobe. Devolve quanto tempo o voo leva (ms).
+  function voar(botao, alvo = $conf) {
+    if (!document.body.animate) return 0;
+    const r = botao.getBoundingClientRect ? botao.getBoundingClientRect() : botao, x0 = r.left + r.width / 2, y0 = r.top + r.height / 2;
     const rastro = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     rastro.setAttribute("class", "voo-rastro"); rastro.setAttribute("aria-hidden", "true");
-    rastro.innerHTML = `<path d="M${x0} ${y0} Q ${x0 + 120} ${y0 - 120} ${x1} ${y1}" fill="none" stroke="#1661D8" stroke-width="2.5" stroke-dasharray="6 9" stroke-linecap="round"/>`;
     const aviao = document.createElement("div");
     aviao.className = "voo-aviao"; aviao.innerHTML = AVIAO;
+    const corpo = alvo === $conf ? $conf.querySelector(".cf-corpo") : null;
+    if (vooDeToque()) {
+      const tam = 48, W = window.innerWidth;
+      const x1 = Math.min(W - tam, x0 + Math.min(110, W * .25)), y1 = -tam * 1.8;
+      const cx = x0 + (x1 - x0) * .15 + 28, cy = y0 - (y0 - y1) * .5;
+      rastro.innerHTML = `<path d="M${x0} ${y0} Q ${cx} ${cy} ${x1} ${y1}" fill="none" stroke="#1661D8" stroke-width="3" stroke-dasharray="7 10" stroke-linecap="round"/>`;
+      aviao.style.width = aviao.style.height = tam + "px";
+      aviao.style.left = (x0 - tam / 2) + "px"; aviao.style.top = (y0 - tam / 2) + "px";
+      alvo.append(rastro, aviao);
+      // pontos da curva, com o nariz do avião acompanhando a direção do voo
+      const quadros = [], N = 10;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N, u = 1 - t;
+        const x = u * u * x0 + 2 * u * t * cx + t * t * x1, y = u * u * y0 + 2 * u * t * cy + t * t * y1;
+        const tx = 2 * u * (cx - x0) + 2 * t * (x1 - cx), ty = 2 * u * (cy - y0) + 2 * t * (y1 - cy);
+        const ang = Math.atan2(ty, tx) * 180 / Math.PI;
+        quadros.push({ transform: `translate(${x - x0}px,${y - y0}px) rotate(${ang}deg) scale(${.75 + .4 * t})`, offset: t });
+      }
+      aviao.animate(quadros, { duration: 1100, easing: "cubic-bezier(.45,0,.75,.6)", fill: "forwards" });
+      rastro.animate([{ clipPath: `inset(${y0}px 0 0 0)`, opacity: 1 }, { clipPath: "inset(0 0 0 0)", opacity: 1, offset: .75 }, { clipPath: "inset(0 0 0 0)", opacity: 0 }], { duration: 1350, easing: "ease-in", fill: "forwards" });
+      if (corpo) corpo.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-8px) scale(.98)" }], { duration: 350, delay: 750, fill: "forwards" });
+      return 1250;
+    }
+    const x1 = Math.min(window.innerWidth + 60, x0 + 300), y1 = -70;
+    rastro.innerHTML = `<path d="M${x0} ${y0} Q ${x0 + 120} ${y0 - 120} ${x1} ${y1}" fill="none" stroke="#1661D8" stroke-width="2.5" stroke-dasharray="6 9" stroke-linecap="round"/>`;
     aviao.style.left = (x0 - 20) + "px"; aviao.style.top = (y0 - 20) + "px";
-    $conf.append(rastro, aviao);
+    alvo.append(rastro, aviao);
     const dx = x1 - x0, dy = y1 - y0;
     aviao.animate([
       { transform: "translate(0,0) rotate(-35deg) scale(.7)", opacity: 1 },
@@ -251,9 +277,20 @@
       { transform: `translate(${dx}px,${dy}px) rotate(-55deg) scale(1.1)`, opacity: 1 }
     ], { duration: 750, easing: "ease-in", fill: "forwards" });
     rastro.animate([{ clipPath: `inset(0 ${window.innerWidth - x0}px 0 0)`, opacity: 1 }, { clipPath: "inset(0 0 0 0)", opacity: 1, offset: .7 }, { clipPath: "inset(0 0 0 0)", opacity: 0 }], { duration: 1000, easing: "ease-in", fill: "forwards" });
-    const corpo = $conf.querySelector(".cf-corpo");
     if (corpo) corpo.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "translateY(-8px) scale(.98)" }], { duration: 300, delay: 450, fill: "forwards" });
     return 820;
+  }
+  // Avião depois de uma ação que salvou sem passar pelo "Tem certeza?" (Salvar do lead e "Como foi?").
+  // Ele voa numa camada própria, por cima de qualquer janela aberta, e some sozinho.
+  function voarSolto(origem) {
+    const r = origem && origem.getBoundingClientRect ? origem.getBoundingClientRect() : origem;
+    if (!r || !r.width) return;
+    const camada = document.createElement("div");
+    camada.className = "voo-camada"; camada.setAttribute("aria-hidden", "true");
+    document.body.appendChild(camada);
+    try { camada.setAttribute("popover", "manual"); camada.showPopover(); } catch (e) { camada.removeAttribute("popover"); }
+    const tempo = voar(r, camada);
+    setTimeout(() => { try { camada.hidePopover(); } catch (e) { } camada.remove(); }, tempo + 300);
   }
   // confirmar({ titulo, texto, botao, perigo }) -> true/false. A ação começa assim que a pessoa confirma; o avião voa por cima.
   function confirmar({ titulo, texto = "", botao = "Confirmar", perigo = false, campo }) {
@@ -1941,6 +1978,7 @@
           m.ok.delete(contato); m.nao.delete(contato); (tipo === "ok" ? m.ok : m.nao).add(contato);
           dec.ok = m.ok; dec.nao = m.nao;
         };
+        cfBox.addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dec.toque = b.getBoundingClientRect(); }, true);
         const gravar = async (extra, msg) => {
           const dados = { ...dec.dados, ...extra };
           if (dec.ok) {
@@ -1956,6 +1994,7 @@
             salvou = true;
             await carregar(); desenhar();
             janelaLead(id, { salvoMsg: msg });
+            voarSolto(dec.toque);
             if (!ehTime() && !antes && podePedir()) aviso("Base liberada: nenhum lead em Novo ou Prospecção. Você já pode pedir uma nova base.");
           } catch (e) { cfBox.querySelectorAll("button, input").forEach(x => { x.disabled = false; }); aviso(API.traduzir(e), true); }
         };
@@ -2014,7 +2053,7 @@
 
       j.querySelector("#l-salvar").addEventListener("click", async (ev) => {
         const falha = (msg) => { erro.textContent = msg; erro.hidden = false; erro.scrollIntoView({ block: "center", behavior: "smooth" }); };
-        const bt = ev.currentTarget;
+        const bt = ev.currentTarget, rBt = bt.getBoundingClientRect();
         const regra = regraStatus(l, st.value);
         if (regra) { await barrado(regra); irPara(regra.foco); return; }
         const textoAzul = st.value === "Cliente Azul" && l.status !== "Cliente Azul" ? j.querySelector("#l-azul").value.trim() : "";
@@ -2055,7 +2094,7 @@
             if (obsPendente) { await API.registrar(id, "observacao", obsPendente); obsCampo.value = ""; }
             return r;
           });
-          Object.assign(l, novo); salvou = true; fechar();
+          Object.assign(l, novo); salvou = true; voarSolto(rBt); fechar();
           await aposMudarLead((st.value === "Sem interesse" ? `${l.empresa}: Sem interesse (${motivoDe(l)}).` : dados.retorno ? `Lead salvo. Próximo contato em ${data(dados.retorno)}.` : "Lead salvo.") + (obsPendente ? " A observação também foi salva." : ""));
         } catch (e) { aviso(API.traduzir(e), true); }
       });
