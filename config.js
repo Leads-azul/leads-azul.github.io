@@ -20,5 +20,8 @@ window.PORTAL_CONFIG = {
   empresa: "Azul Logística",
   logoUrl: "img/logo-azul-logistica.png", // logo branco, usado no fundo azul (entrada e menu)
   dominiosPermitidos: ["voeazul.com.br", "azulcargo.com.br"], // as regras do Firestore também conferem isso
-  prazoRetornoDias: 7                     // lead parado em Novo ou Prospecção há mais dias que isso fica em alerta
+  prazoRetornoDias: 7,                    // lead parado em Novo ou Prospecção há mais dias que isso fica em alerta
+  // Avisos no celular: chave PÚBLICA de push da web (Firebase > Configurações do projeto > Cloud Messaging >
+  // Configuração da Web > Certificados push da Web). Ela foi feita para ficar no site. Vazia = avisos desligados.
+  vapidKey: "BI0-oDEM_HLg-nrFp3JOEHOHfaNiyyBAgdPvRvUzsMT5d0kgpF32LuLeht4Vg1AXmxvy8iXSCe1G2pa2n0otX68"
 };

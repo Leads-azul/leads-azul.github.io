@@ -1,0 +1,10 @@
+{
+  "name": "portal-leads-robo-avisos",
+  "private": true,
+  "description": "Robô que manda os avisos no celular do Portal de Leads (roda no GitHub Actions).",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "firebase-admin": "13.4.0"
+  }
+}

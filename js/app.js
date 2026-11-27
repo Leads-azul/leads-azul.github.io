@@ -194,7 +194,8 @@
     fechado: '<path d="M4 12.5 9 17.5 20 6.5"/>',
     aviao: '<path d="M2 13l8-1 5-8h2l-2 8 5 1 2-2h1l-1 3 1 3h-1l-2-2-5 1 2 8h-2l-5-8-8-1z"/>',
     cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
-    email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'
+    email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    sino: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>'
   };
   const icone = (n) => `<span class="icone" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONES[n]}</svg></span>`;
   const sobre = () => `${esc(TIME)} | ${esc(EMPRESA)}`;
@@ -218,6 +219,57 @@
   let instalarPrompt = null;
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); instalarPrompt = e; });
   window.addEventListener("appinstalled", () => { instalarPrompt = null; });
+
+  // ---- Avisos no celular ----
+  // estado: "ativo" (este aparelho recebe), "desligado" (dá para ativar), "bloqueado" (a pessoa negou nos ajustes),
+  // "iphone" (iPhone fora da tela inicial: precisa instalar primeiro), "sem-suporte" (navegador não recebe avisos).
+  const AV = { suportado: null };
+  const ehIphone = () => /iPhone|iPad|iPod/i.test(navigator.userAgent || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const instalado = () => (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+  function estadoAvisos() {
+    if (API.demo) return "sem-suporte";
+    if (AV.suportado === false) return ehIphone() && !instalado() ? "iphone" : "sem-suporte";
+    if (AV.suportado === null) return "carregando";
+    const perm = API.avisosPermissao();
+    if (perm === "denied") return "bloqueado";
+    return API.avisosAtivosAqui() ? "ativo" : "desligado";
+  }
+  const avisosDispensado = () => { try { return !!localStorage.getItem("portal-avisos-dispensado"); } catch (e) { return true; } };
+  function cartaoAvisos() {
+    const st = estadoAvisos();
+    if (avisosDispensado() || !((st === "desligado") || (st === "iphone" && ehCelular()))) return "";
+    const texto = st === "iphone"
+      ? `No iPhone, os avisos chegam com o portal na tela de início: no Safari, toque em <b>Compartilhar</b> e em <b>Adicionar à Tela de Início</b>. Depois abra pelo ícone e ative aqui.`
+      : ehTime() ? `Saiba na hora quando chegar pedido novo${ehAdmin() ? " ou cadastro para aprovar" : " na sua carteira"}, mesmo com o portal fechado.`
+      : `Saiba na hora quando seus leads chegarem e receba o resumo dos contatos do dia, mesmo com o portal fechado.`;
+    return `<section class="cartao-avisos" role="region" aria-label="Avisos no celular">${icone("sino")}<div><h2>Receba avisos no celular</h2><p>${texto}</p></div>
+      <div class="acoes">${st === "desligado" ? `<button class="btn btn-primario" data-acao="ativarAvisos">Ativar avisos</button>` : ""}<button class="btn" data-acao="dispensarAvisos">Agora não</button></div></section>`;
+  }
+  function blocoAvisos() {
+    const st = estadoAvisos();
+    if (API.demo) return "";
+    const corpo = {
+      carregando: `<p class="sub">Conferindo este aparelho…</p>`,
+      ativo: `<p class="selo selo-ok">Avisos ativados neste aparelho</p><p class="sub">${ehTime() ? `Você recebe: pedido novo da sua carteira${ehAdmin() ? ", cadastro para aprovar" : ""} e o resumo do dia às 8h (dias úteis).` : "Você recebe: leads que chegaram, acesso liberado e o resumo dos contatos do dia às 8h (dias úteis)."}</p>
+        <button class="btn" data-acao="desativarAvisos">Desativar neste aparelho</button>`,
+      desligado: `<p class="sub">${ehTime() ? `Pedido novo da sua carteira${ehAdmin() ? ", cadastro para aprovar" : ""} e o resumo do dia às 8h (dias úteis).` : "Leads que chegaram, acesso liberado e o resumo dos contatos do dia às 8h (dias úteis)."} Os avisos chegam mesmo com o portal fechado.</p>
+        <button class="btn btn-primario" data-acao="ativarAvisos">Ativar avisos neste aparelho</button>`,
+      bloqueado: `<p class="sub">Os avisos do portal estão bloqueados neste aparelho. Para liberar: ${ehIphone() ? "Ajustes do iPhone › Notificações › <b>Leads</b> › Permitir Notificações" : "toque no cadeado ao lado do endereço (ou em Configurações do app › Notificações) e permita as notificações"}. Depois volte aqui.</p>`,
+      iphone: `<p class="sub">No iPhone, os avisos só funcionam com o portal na tela de início. No Safari, toque em <b>Compartilhar</b> › <b>Adicionar à Tela de Início</b>, abra o portal pelo ícone novo e volte aqui para ativar.</p>`,
+      "sem-suporte": `<p class="sub">Este navegador não recebe avisos. No celular, use o Chrome (Android) ou o portal instalado na tela de início (iPhone).</p>`
+    }[st];
+    return `<section class="bloco"><h2>Avisos no celular</h2>${corpo}</section>`;
+  }
+  async function prepararAvisos() {
+    if (AV.suportado !== null || API.demo) return;
+    AV.suportado = await API.avisosSuportados().catch(() => false);
+    if (AV.suportado) {
+      API.conferirAvisos();
+      API.aoReceberAviso((n) => { if (n && (n.title || n.body)) aviso(`${n.title ? n.title + ": " : ""}${n.body || ""}`); });
+    }
+    if (E.perfil && document.getElementById("principal")) desenhar();
+    else if (document.getElementById("espera-avisos")) mostrarAvisoEspera();
+  }
 
   async function fechar() {
     if (guardaFechar) { const g = guardaFechar; guardaFechar = null; if (!(await g())) { guardaFechar = g; return; } }
@@ -899,6 +951,7 @@
           : dono ? `${esc(dono)}, dono da unidade ${esc(principal.sigla)}, ou o time de ${esc(TIME)} vai conferir seus dados e liberar o acesso. Assim que liberarem, o portal abre sozinho.`
           : `O time de ${esc(TIME)} vai conferir seus dados e liberar o acesso${unid ? " " + esc(unid) : ""}. Assim que liberarem, o portal abre sozinho.`}</p>
         <div id="espera-contato" class="espera-contato" hidden></div>
+        <div id="espera-avisos" class="espera-contato" hidden></div>
         <div class="acoes" style="justify-content:center">
           <button class="btn" id="b-atualizar">Já fui aprovado</button>
           <button class="btn" id="b-celular">Alterar meu celular</button>
@@ -913,6 +966,7 @@
     pararObservar = API.observar([], () => { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } iniciar(); });
     document.getElementById("b-celular").onclick = () => janelaCelular();
     document.getElementById("b-sair").onclick = sair;
+    if (!recusado) { if (AV.suportado === null) prepararAvisos(); else mostrarAvisoEspera(); }
     // Botão para falar com quem do time cuida da região (ou do Sudeste, se a região estiver livre).
     (async () => {
       try { E.carteiras = await API.carteiras(); } catch (e) { return; }
@@ -927,6 +981,23 @@
         <a class="btn btn-zap" href="${esc(zap(c.celular, msg))}" target="_blank" rel="noopener">Falar com ${esc(primeiroNome(c.nome))} no WhatsApp</a>`;
       caixa.hidden = false;
     })();
+  }
+
+  // Tela de espera: oferece avisar no celular quando o acesso for liberado.
+  function mostrarAvisoEspera() {
+    const caixa = document.getElementById("espera-avisos");
+    if (!caixa) return;
+    const st = estadoAvisos();
+    if (st === "ativo") { caixa.innerHTML = `<p class="sub">✓ Avisos ativados: você recebe uma notificação quando o acesso for liberado.</p>`; caixa.hidden = false; return; }
+    if (st !== "desligado") { caixa.hidden = true; return; }
+    caixa.innerHTML = `<p class="sub">Quer saber na hora em que o acesso for liberado?</p><button class="btn" id="b-avisos-espera">Avisar no celular</button>`;
+    caixa.hidden = false;
+    document.getElementById("b-avisos-espera").onclick = async (ev) => {
+      const b = ev.currentTarget;
+      try { const r = await ocupado(b, () => API.ativarAvisos(true)); if (r.ok) { voarSolto(b); aviso("Pronto! Avisamos neste aparelho quando liberarem."); } else if (r.motivo === "denied") aviso("Os avisos foram bloqueados neste aparelho.", true); }
+      catch (e) { aviso("Não foi possível ativar os avisos agora.", true); }
+      mostrarAvisoEspera();
+    };
   }
 
   async function sair() { if (pararObservar) { pararObservar(); pararObservar = null; chaveObservar = ""; } await API.sair(); E.perfil = null; E.tela = null; telaAcesso("entrar"); }
@@ -1020,9 +1091,10 @@
             <button class="link-btn" id="b-sair">Sair da conta</button>
           </div>
         </aside>
-        <main class="principal" id="principal">${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}${AUTORIA}</p></main>
+        <main class="principal" id="principal">${["hoje", "leads"].includes(E.tela) ? cartaoAvisos() : ""}${conteudo()}<p class="rodape">${esc(cfg.nomeDoPortal || "Portal de Leads")}, ferramenta do time de ${esc(TIME)} | ${esc(EMPRESA)}${AUTORIA}</p></main>
       </div>`;
 
+    if (AV.suportado === null) prepararAvisos();
     $app.querySelectorAll("[data-tela]").forEach(b => b.addEventListener("click", () => { E.tela = b.dataset.tela; E.f.busca = ""; E.f.faltam = false; desenhar(); window.scrollTo(0, 0); }));
     document.getElementById("b-sair").onclick = sair;
     ligarTela();
@@ -1100,6 +1172,21 @@
   }
 
   const acoes = {
+    ativarAvisos: async (b) => {
+      try {
+        const r = await ocupado(b, () => API.ativarAvisos(true));
+        if (r.ok) { aviso("Pronto! Os avisos do portal vão chegar neste aparelho."); voarSolto(b); }
+        else if (r.motivo === "denied") aviso("Os avisos foram bloqueados neste aparelho. Dá para liberar nos ajustes do celular (veja em Minha conta).", true);
+        else if (r.motivo !== "default") aviso("Não foi possível ativar os avisos neste aparelho.", true);
+      } catch (e) { aviso("Não foi possível ativar os avisos agora. Tente de novo em instantes.", true); }
+      desenhar();
+    },
+    desativarAvisos: async (b) => {
+      if (!(await confirmar({ titulo: "Desativar os avisos neste aparelho?", texto: "Os avisos do portal param de chegar neste celular. Dá para ativar de novo em Minha conta.", botao: "Desativar" }))) return;
+      try { await ocupado(b, () => API.desativarAvisos()); aviso("Avisos desativados neste aparelho."); } catch (e) { aviso(API.traduzir(e), true); }
+      desenhar();
+    },
+    dispensarAvisos: () => { try { localStorage.setItem("portal-avisos-dispensado", new Date().toISOString()); } catch (e) { /* ignora */ } aviso("Tudo bem. Dá para ativar os avisos quando quiser em Minha conta."); desenhar(); },
     instalar: async () => {
       if (!instalarPrompt) return;
       instalarPrompt.prompt();
@@ -3572,6 +3659,7 @@
             <div><h3>Android (Chrome)</h3><ol><li>Abra o portal no Chrome.</li><li>Toque nos <b>três pontinhos</b> no alto, à direita.</li><li>Toque em <b>Adicionar à tela inicial</b> (ou <b>Instalar app</b>).</li><li>Confirme em <b>Adicionar</b>.</li></ol></div>
             <div><h3>iPhone (Safari)</h3><ol><li>Abra o portal no Safari.</li><li>Toque no botão <b>Compartilhar</b> (o quadrado com a seta para cima).</li><li>Role e toque em <b>Adicionar à Tela de Início</b>.</li><li>Toque em <b>Adicionar</b>.</li></ol></div>
           </div></section>
+        ${blocoAvisos()}
         <section class="bloco"><h2>Trocar senha</h2>
           <form id="f-senha">
             <div class="campo"><label for="n-senha">Nova senha</label><input id="n-senha" type="password" autocomplete="new-password" minlength="8" required><span class="dica">Mínimo de 8 caracteres. Não use a senha da sua conta Azul. Use “Mostrar” para conferir o que digitou.</span></div>

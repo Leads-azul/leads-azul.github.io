@@ -519,6 +519,49 @@
         return saida;
       },
 
+      // ---- Avisos no celular (notificações) ----
+      // O aparelho que ativa recebe um "endereço" (token) e ele fica em avisos/{uid} (até 5 aparelhos por pessoa).
+      // Quem manda os avisos é o robô do GitHub (pasta robo/), que lê esses endereços com a chave guardada nos segredos do GitHub.
+      async avisosSuportados() {
+        if (!/^[A-Za-z0-9_-]{60,}$/.test(cfg.vapidKey || "") || !("Notification" in window) || !("serviceWorker" in navigator) || !firebase.messaging) return false;
+        try { return await firebase.messaging.isSupported(); } catch (e) { return false; }
+      },
+      avisosPermissao() { return "Notification" in window ? Notification.permission : "unsupported"; },
+      avisosAtivosAqui() { try { return !!localStorage.getItem("portal-aviso-token") && Notification.permission === "granted"; } catch (e) { return false; } },
+      async ativarAvisos(pedir = true) {
+        if (!(await api.avisosSuportados())) return { ok: false, motivo: "sem-suporte" };
+        const perm = pedir ? await Notification.requestPermission() : Notification.permission;
+        if (perm !== "granted") return { ok: false, motivo: perm };
+        const reg = await navigator.serviceWorker.register("firebase-messaging-sw.js");
+        await navigator.serviceWorker.ready;
+        const token = await app.messaging().getToken({ vapidKey: cfg.vapidKey, serviceWorkerRegistration: reg });
+        if (!token) return { ok: false, motivo: "sem-token" };
+        let antigo = null; try { antigo = localStorage.getItem("portal-aviso-token"); } catch (e) { /* sem armazenamento */ }
+        const ref = db.doc("avisos/" + auth.currentUser.uid);
+        let lista = [];
+        try { const d = await ref.get(); if (d.exists) lista = d.data().tokens || []; } catch (e) { lista = []; }
+        if (antigo === token && lista.includes(token)) return { ok: true };
+        lista = lista.filter(t => t !== token && t !== antigo).concat(token).slice(-5);
+        await ref.set({ tokens: lista, atualizado_em: TS() });
+        try { localStorage.setItem("portal-aviso-token", token); } catch (e) { /* sem armazenamento */ }
+        return { ok: true };
+      },
+      // Ao abrir o portal: se a pessoa já permitiu, confere o endereço em silêncio (ele pode mudar com o tempo).
+      async conferirAvisos() { if (api.avisosPermissao() === "granted") try { await api.ativarAvisos(false); } catch (e) { /* tenta de novo na próxima */ } },
+      async desativarAvisos() {
+        let token = null; try { token = localStorage.getItem("portal-aviso-token"); } catch (e) { /* sem armazenamento */ }
+        const ref = db.doc("avisos/" + auth.currentUser.uid);
+        try {
+          const d = await ref.get();
+          const lista = d.exists ? (d.data().tokens || []).filter(t => t !== token) : [];
+          if (lista.length) await ref.set({ tokens: lista, atualizado_em: TS() }); else if (d.exists) await ref.delete();
+        } catch (e) { /* segue para apagar o endereço do aparelho */ }
+        try { await app.messaging().deleteToken(); } catch (e) { /* ignora */ }
+        try { localStorage.removeItem("portal-aviso-token"); } catch (e) { /* ignora */ }
+      },
+      // Aviso que chega com o portal aberto na tela: o celular não mostra sozinho, então o portal mostra.
+      async aoReceberAviso(fn) { if (await api.avisosSuportados()) try { app.messaging().onMessage(m => fn(m.notification || {})); } catch (e) { /* ignora */ } },
+
       // Histórico
       async historico(leadId) {
         const [pid, k] = separarId(leadId);
@@ -849,6 +892,14 @@
         return desdeRecebido(copia(db.historico.filter(h => h.pedido === pid && h.lead === k)));
       },
       async registrar(leadId, tipo, texto) { await espera(); const [pid, k] = separarId(leadId); reg(pid, k, tipo, texto); },
+      // Avisos no celular: no modo demonstração não existem.
+      async avisosSuportados() { return false; },
+      avisosPermissao() { return "unsupported"; },
+      avisosAtivosAqui() { return false; },
+      async ativarAvisos() { return { ok: false, motivo: "demo" }; },
+      async conferirAvisos() { },
+      async desativarAvisos() { },
+      async aoReceberAviso() { },
       async editarObservacao(leadId, hid, texto) {
         const h = db.historico.find(x => x.id === hid);
         if (h.tipo !== "observacao" || h.autor !== usuario.id || !mesmoDia(h.criado_em)) negar();

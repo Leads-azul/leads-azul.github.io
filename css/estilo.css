@@ -810,3 +810,16 @@ tr.vencido td { color: var(--muted); }
   .lista-cidades button { min-height: 44px; font-size: 16px; }
   .seg-sugeridos .sug { min-height: 44px; }
 }
+
+/* Avisos no celular: convite para ativar (Hoje e Meus leads) */
+.cartao-avisos { background: var(--blue-50, #EEF4FF); border: 1px solid #C9DAF8; border-radius: var(--radius); padding: 16px 20px; margin-bottom: 18px;
+  display: grid; grid-template-columns: auto 1fr auto; gap: 14px 16px; align-items: center; box-shadow: var(--shadow); }
+.cartao-avisos h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.cartao-avisos p { margin: 4px 0 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+.cartao-avisos > .icone { width: 44px; height: 44px; }
+.cartao-avisos .acoes { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .cartao-avisos { grid-template-columns: auto 1fr; }
+  .cartao-avisos .acoes { grid-column: 1 / -1; }
+  .cartao-avisos .acoes .btn { flex: 1; }
+}

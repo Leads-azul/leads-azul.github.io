@@ -429,6 +429,18 @@ service cloud.firestore {
       allow delete: if resource.data.usado == false && (ehAdmin() || donoDe(resource.data.sigla));
     }
 
+    // Avisos no celular: cada pessoa guarda os "endereços" dos próprios aparelhos (até 5) para o robô mandar os avisos.
+    // Só a própria pessoa lê e grava; ninguém mais (nem o administrador) vê. O robô do GitHub lê com a chave do servidor.
+    match /avisos/{uid} {
+      allow get, delete: if logado() && dominioOk() && request.auth.uid == uid;
+      allow create, update: if logado() && dominioOk() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['tokens', 'atualizado_em'])
+        && request.resource.data.tokens is list && request.resource.data.tokens.size() >= 1 && request.resource.data.tokens.size() <= 5
+        && request.resource.data.atualizado_em == request.time;
+    }
+
+    // robo_avisos (o que o robô já avisou) fica fechado para o site: só o robô, com a chave do servidor, mexe.
+
     // Qualquer outro caminho fica fechado.
     match /{caminho=**} {
       allow read, write: if false;
