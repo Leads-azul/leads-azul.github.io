@@ -1,0 +1,40 @@
+# Robô dos avisos no celular do Portal de Leads.
+# Roda a cada 15 minutos (o GitHub pode atrasar alguns minutos em horários de pico) e também pelo botão "Run workflow".
+# A chave do Firebase fica em Settings > Secrets and variables > Actions > FIREBASE_SERVICE_ACCOUNT (nunca no código).
+name: Avisos do portal
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      teste:
+        description: "Mandar um aviso de teste para os administradores (sim/nao)"
+        required: false
+        default: "nao"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: avisos-do-portal
+  cancel-in-progress: false
+
+jobs:
+  avisos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Instalar
+        working-directory: robo
+        run: npm install --omit=dev --no-audit --no-fund --loglevel=error
+      - name: Mandar os avisos
+        working-directory: robo
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          AVISO_TESTE: ${{ github.event.inputs.teste }}
+        run: node avisos.mjs
