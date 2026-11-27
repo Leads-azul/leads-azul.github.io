@@ -386,12 +386,30 @@
   // Celular ou computador: no computador, "Ligar" mostra o número em vez de abrir um link de telefone que não faz nada.
   const ehCelular = () => (window.matchMedia && window.matchMedia("(pointer: coarse)").matches) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
 
+  // Regra de senha (igual à política do Firebase): 8 caracteres, 1 número e 1 caractere especial.
+  const ESPECIAIS = "^$*.[]{}()?\"!@#%&/\\,><':;|_~`-"; // mesma lista do Firebase (sem = e +)
+  const REGRA_SENHA = "Mínimo de 8 caracteres, com pelo menos 1 número e 1 caractere especial (ex.: ! @ # % & * - _ .).";
+  const regrasSenha = (s) => [
+    ["8 caracteres ou mais", String(s || "").length >= 8],
+    ["1 número", /[0-9]/.test(s || "")],
+    ["1 caractere especial (! @ # % & * - _ .)", [...String(s || "")].some(c => ESPECIAIS.includes(c))]
+  ];
+  const senhaFraca = (s) => regrasSenha(s).some(([, ok]) => !ok) ? "A senha precisa ter pelo menos 8 caracteres, com pelo menos 1 número e 1 caractere especial (ex.: ! @ # % & * - _ .)." : null;
+  // Lista que marca ✓ conforme a pessoa digita (só nos campos de senha nova).
+  function listaRegrasSenha(inp, depois) {
+    const ul = document.createElement("ul"); ul.className = "regras-senha"; ul.setAttribute("aria-live", "polite");
+    const pintar = () => { ul.innerHTML = regrasSenha(inp.value).map(([t, ok]) => `<li class="${ok ? "ok" : ""}">${ok ? "✓" : "•"} ${esc(t)}</li>`).join(""); };
+    inp.addEventListener("input", pintar); pintar();
+    depois.after(ul);
+  }
+
   // Mostrar a senha: todo campo de senha ganha um botão "Mostrar" (inclusive os que aparecem depois, em janelas e telas novas).
   function olhoSenha(raiz) {
     (raiz || document).querySelectorAll('input[type="password"]:not([data-olho])').forEach(inp => {
       inp.dataset.olho = "1";
       const caixa = document.createElement("span"); caixa.className = "senha-caixa";
       inp.parentNode.insertBefore(caixa, inp); caixa.appendChild(inp);
+      if (inp.autocomplete === "new-password") { const dica = caixa.parentNode.querySelector(".dica"); listaRegrasSenha(inp, dica || caixa); }
       const b = document.createElement("button"); b.type = "button"; b.className = "senha-olho"; b.textContent = "Mostrar";
       b.setAttribute("aria-label", "Mostrar a senha"); b.setAttribute("aria-pressed", "false");
       b.addEventListener("click", () => {
@@ -719,7 +737,7 @@
         </div>
         <p class="dica dica-solta so-exec" hidden>A região define quem do time de ${esc(TIME)} cuida dos seus pedidos de leads.</p>
         ${refazer ? "" : `<div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>`}
-        <div class="campo"${refazer ? " hidden" : ""}><label for="c-senha">Crie uma senha</label><input id="c-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres. Use “Mostrar” para conferir o que digitou.</span></div>
+        <div class="campo"${refazer ? " hidden" : ""}><label for="c-senha">Crie uma senha</label><input id="c-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">${REGRA_SENHA} Use “Mostrar” para conferir o que digitou.</span></div>
         <div class="erro-form" id="c-erro" hidden></div>
         <button class="btn btn-primario btn-largo" type="submit">Criar acesso</button>
       </form>
@@ -750,7 +768,12 @@
         const email = document.getElementById("e-email").value, senha = document.getElementById("e-senha").value;
         if (!email || !senha) { erroEl.textContent = "Informe e-mail e senha."; erroEl.hidden = false; return; }
         try { await ocupado(fe.querySelector("button[type=submit]"), () => API.entrar(email, senha)); E.tela = null; iniciar(); }
-        catch (e) { erroEl.textContent = API.traduzir(e); erroEl.hidden = false; }
+        catch (e) {
+          erroEl.textContent = e && e.code === "auth/password-does-not-meet-requirements"
+            ? "Sua senha é de antes das regras novas de segurança (8 caracteres, 1 número e 1 caractere especial). Toque em \"Esqueci minha senha\" para pedir ao time um link de senha nova."
+            : API.traduzir(e);
+          erroEl.hidden = false;
+        }
       });
       document.getElementById("b-esqueci").addEventListener("click", () => janelaEsqueci(document.getElementById("e-email").value.trim()));
     }
@@ -810,7 +833,7 @@
         if (!ehDoTime && !ehExec && API.siglaDoEmail(em) !== sg) return mostrar(`O e-mail precisa começar com a sigla da unidade: ${sg.toLowerCase()}.seunome@${em.split("@")[1]}.`);
         if (!/^[A-Z0-9]{2,10}$/.test(sg) && !ehDoTime && !ehExec) return mostrar("A sigla deve ter de 2 a 10 letras ou números.");
         if (fone(v("c-cel")).length < 12) return mostrar("Informe o celular com DDD.");
-        if (!refazer && v("c-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
+        if (!refazer && senhaFraca(v("c-senha"))) return mostrar(senhaFraca(v("c-senha")));
         try {
           const r = await ocupado(fc.querySelector("button[type=submit]"), () => API.cadastrar(em, v("c-senha"), {
             nome: v("c-nome"), celular: v("c-cel"), sigla: sg, cidade_uf: cidadeUf(v("c-cidade")), regiao: v("c-regiao"), time: ehDoTime, cargo: cargo()
@@ -907,7 +930,7 @@
         <div class="campo"><label for="v-email">E-mail Azul</label><input id="v-email" type="email" value="${esc(c.email)}" readonly aria-readonly="true"><span class="dica">É o e-mail do convite e vira o seu login.</span></div>
         <div class="campo"><label for="v-cel">Celular com DDD</label><input id="v-cel" type="tel" autocomplete="tel" required value="${esc(foneBonito(c.celular || ""))}" placeholder="(11) 90000-0000"></div>
         <div class="aviso-senha">${icone("cadeado")}<span>Crie uma senha só para este portal. Não use a senha da sua conta Azul.</span></div>
-        <div class="campo"><label for="v-senha">Crie uma senha</label><input id="v-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">Mínimo de 8 caracteres. Use “Mostrar” para conferir o que digitou.</span></div>
+        <div class="campo"><label for="v-senha">Crie uma senha</label><input id="v-senha" type="password" autocomplete="new-password" required minlength="8"><span class="dica">${REGRA_SENHA} Use “Mostrar” para conferir o que digitou.</span></div>
         <div class="erro-form" id="v-erro" hidden></div>
         <button class="btn btn-primario btn-largo" type="submit">${nova ? "Criar senha e entrar" : "Criar acesso e entrar"}</button>
       </form>
@@ -922,7 +945,7 @@
       const cel = celularLimpo(v("v-cel"));
       if (v("v-nome").length < 2) return mostrar("Digite seu nome completo.");
       if (!cel) return mostrar("Informe o celular com DDD, por exemplo (11) 91234-5678.");
-      if (v("v-senha").length < 8) return mostrar("A senha precisa ter pelo menos 8 caracteres.");
+      if (senhaFraca(v("v-senha"))) return mostrar(senhaFraca(v("v-senha")));
       try {
         await ocupado(f.querySelector("button[type=submit]"), () => API.cadastrarComConvite(codigo, v("v-senha"), { nome: v("v-nome"), celular: cel }));
         tirarConviteDaUrl(); E.tela = null; if (nova) E.senhaNova = true; else E.boasVindas = c.sigla; iniciar();
@@ -3629,7 +3652,7 @@
       f.addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const a = document.getElementById("n-senha").value;
-        if (a.length < 8) return aviso("A senha precisa ter pelo menos 8 caracteres.", true);
+        if (senhaFraca(a)) return aviso(senhaFraca(a), true);
         if (!(await confirmar({ titulo: "Trocar a sua senha?", texto: "Na próxima vez, entre com a senha nova.", botao: "Trocar senha" }))) return;
         try { await ocupado(f.querySelector("button"), () => API.trocarSenha(a)); f.reset(); aviso("Senha alterada."); }
         catch (e) { aviso(API.traduzir(e), true); }
@@ -3662,7 +3685,7 @@
         ${blocoAvisos()}
         <section class="bloco"><h2>Trocar senha</h2>
           <form id="f-senha">
-            <div class="campo"><label for="n-senha">Nova senha</label><input id="n-senha" type="password" autocomplete="new-password" minlength="8" required><span class="dica">Mínimo de 8 caracteres. Não use a senha da sua conta Azul. Use “Mostrar” para conferir o que digitou.</span></div>
+            <div class="campo"><label for="n-senha">Nova senha</label><input id="n-senha" type="password" autocomplete="new-password" minlength="8" required><span class="dica">${REGRA_SENHA} Não use a senha da sua conta Azul. Use “Mostrar” para conferir o que digitou.</span></div>
             <button class="btn btn-primario" type="submit">Trocar senha</button>
           </form></section>
       </div>`;

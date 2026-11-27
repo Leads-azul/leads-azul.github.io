@@ -823,3 +823,7 @@ tr.vencido td { color: var(--muted); }
   .cartao-avisos .acoes { grid-column: 1 / -1; }
   .cartao-avisos .acoes .btn { flex: 1; }
 }
+
+/* Regra de senha: lista que marca ✓ conforme a pessoa digita */
+.regras-senha { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--muted); }
+.regras-senha li.ok { color: #1E7B4A; font-weight: 500; }
